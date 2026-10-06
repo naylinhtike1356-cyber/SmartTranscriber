@@ -18,8 +18,8 @@ class PcmAudioWriter(
 
     companion object {
         const val SAMPLE_RATE = 16_000
-        const val CHUNK_MAX_SECONDS = 180 // 3 minutes per chunk
-        const val CHUNK_MIN_SECONDS = 150 // Split on silence after 2.5 minutes
+        const val CHUNK_MAX_SECONDS = 120 // 2 minutes per chunk (optimal for Gemini speed & zero hallucination)
+        const val CHUNK_MIN_SECONDS = 90  // Split on silence after 1.5 minutes for natural sentence boundaries
     }
 
     val spans = mutableListOf<AudioChunkSpan>()

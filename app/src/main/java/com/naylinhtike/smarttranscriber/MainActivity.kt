@@ -24,8 +24,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import java.io.File
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,6 +72,16 @@ class MainActivity : ComponentActivity() {
                     viewModel.snackBarMessages.collectLatest { msg ->
                         snackbarHostState.showSnackbar(msg)
                     }
+                }
+
+                // Check for new app updates in background on startup
+                LaunchedEffect(Unit) {
+                    val appVersion = try {
+                        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
+                    } catch (_: Exception) {
+                        "1.0.0"
+                    }
+                    viewModel.checkAppUpdate(appVersion)
                 }
 
                 val audioPicker = rememberLauncherForActivityResult(
@@ -227,11 +239,25 @@ fun TranscriberMainContent(
     val jobs by viewModel.filteredJobs.collectAsState()
     val filter by viewModel.currentFilter.collectAsState()
     val notionEnabled by viewModel.notionEnabled.collectAsState()
+    val updateUiState by viewModel.updateState.collectAsState()
 
     val activeCount = remember(allJobs) { allJobs.count { it.isActive || it.state == TranscribeJob.STATE_PAUSED } }
     val completedCount = remember(allJobs) { allJobs.count { it.state == TranscribeJob.STATE_COMPLETED } }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = updateUiState is UpdateUiState.UpdateAvailable ||
+                    updateUiState is UpdateUiState.Downloading ||
+                    updateUiState is UpdateUiState.ReadyToInstall
+        ) {
+            HomeUpdateBanner(
+                state = updateUiState,
+                onUpdate = { release -> viewModel.downloadAndInstallUpdate(release) },
+                onInstall = { file -> viewModel.installDownloadedApk(file) },
+                onDismiss = { viewModel.resetUpdateState() }
+            )
+        }
+
         FilterTabRow(
             currentFilter = filter,
             totalCount = allJobs.size,
@@ -261,6 +287,118 @@ fun TranscriberMainContent(
                         onSaveTextFile = { onSaveTextFile(job) }
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun HomeUpdateBanner(
+    state: UpdateUiState,
+    onUpdate: (AppReleaseInfo) -> Unit,
+    onInstall: (File) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            when (state) {
+                is UpdateUiState.UpdateAvailable -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Icon(
+                                Icons.Default.SystemUpdate,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "ဗားရှင်းအသစ် ရရှိနိုင်ပါသည်: v${state.release.version}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.5.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(16.dp))
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = state.release.releaseNotes.ifBlank { "တရားအရှည်များ စာသားပြောင်းနိုင်ခြင်း စနစ်သစ် ပါဝင်ပါသည်" },
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { onUpdate(state.release) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("တိုက်ရိုက် အဆင့်မြှင့်မည် (Update Now)")
+                    }
+                }
+                is UpdateUiState.Downloading -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "အပ်ဒိတ် ဒေါင်းလုဒ်ဆွဲနေသည်... ${(state.progressPercent * 100).toInt()}%",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "${(state.downloadedBytes / (1024 * 1024))} MB",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { state.progressPercent },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                    )
+                }
+                is UpdateUiState.ReadyToInstall -> {
+                    Text(
+                        text = "အပ်ဒိတ် ဒေါင်းလုဒ် အောင်မြင်စွာ ပြီးပါပြီ!",
+                        fontWeight = FontWeight.Bold,
+                        color = Emerald500,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(
+                        onClick = { onInstall(state.apkFile) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Emerald500),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("ယခုပဲ App ထည့်သွင်းမည် (Install Now)")
+                    }
+                }
+                else -> {}
             }
         }
     }
@@ -515,7 +653,7 @@ fun TranscribeJobCard(
                             modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
-                                Icons.Default.ChromeReaderMode,
+                                Icons.AutoMirrored.Filled.ChromeReaderMode,
                                 contentDescription = "Open in Reader App",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(17.dp)
@@ -758,7 +896,7 @@ fun TranscriptReaderSheet(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(Icons.Default.ChromeReaderMode, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.AutoMirrored.Filled.ChromeReaderMode, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("စာဖတ် App ဖြင့် ဖွင့်ပါ", fontSize = 13.sp)
                 }

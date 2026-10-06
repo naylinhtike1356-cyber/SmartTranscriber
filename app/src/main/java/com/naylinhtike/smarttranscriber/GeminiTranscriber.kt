@@ -20,7 +20,7 @@ class GeminiTranscriber(
 ) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .readTimeout(150, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
@@ -29,10 +29,12 @@ class GeminiTranscriber(
     private val currentKeyIndex = AtomicInteger(0)
 
     companion object {
-        // High-speed, high-accuracy Google Gemini audio models
+        // High-speed, high-accuracy Google Gemini audio models ordered by performance and availability
         private val MODELS = listOf(
-            "gemini-1.5-flash",
             "gemini-2.0-flash",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash",
             "gemini-1.5-pro"
         )
     }
@@ -61,9 +63,12 @@ class GeminiTranscriber(
         val requestBodyJson = buildRequestBody(promptText, base64Audio)
         var lastException: Exception? = null
 
-        // Support unlimited duration audio (e.g. 1-3 hour Dhamma talks) with automatic key rotation and backoff retries
-        for (attempt in 1..4) {
+        // Support unlimited duration audio (e.g. 1-3 hour Dhamma talks) with automatic model fallback, key rotation, and rate-limit backoff
+        val maxAttempts = 6
+        for (attempt in 1..maxAttempts) {
             val keyCount = keys.size
+            var anyRateLimitHit = false
+
             for (offset in 0 until keyCount) {
                 val keyIdx = (currentKeyIndex.get() + offset) % keyCount
                 val apiKey = keys[keyIdx]
@@ -82,17 +87,19 @@ class GeminiTranscriber(
 
                         if (response.isSuccessful) {
                             val parsedText = extractText(responseText)
-                            // Advance key index so load is shared fairly across keys
+                            // Advance key index so load is shared fairly across multiple keys
                             currentKeyIndex.incrementAndGet()
                             return@withContext if (parsedText.isNotBlank()) parsedText else "[no speech]"
                         }
 
                         if (code == 429) {
-                            // Rate limit on this key, switch to next key
-                            lastException = IOException("Gemini API Rate Limit (429) hit. Rotating key...")
-                            break
+                            anyRateLimitHit = true
+                            lastException = IOException("Gemini API Rate Limit (429) - Quota ပြည့်နေပါသည်: Model $model, စောင့်ဆိုင်းပြီး ပြန်လည်ကြိုးစားနေပါသည်...")
+                            // In Google AI Studio, quotas are maintained per-model. Try next model before leaving key!
+                            continue
                         } else if (code == 404) {
-                            // Model not supported on this endpoint, try next fallback model
+                            // Model not available on this endpoint or account, try next fallback model
+                            lastException = IOException("Gemini model $model not found (HTTP 404).")
                             continue
                         } else {
                             lastException = IOException("Gemini API Error (HTTP $code): ${responseText.take(200)}")
@@ -103,9 +110,20 @@ class GeminiTranscriber(
                 }
             }
 
-            // If all keys hit 429 rate limit, wait gracefully and retry instead of failing
-            if (attempt < 4) {
-                delay(attempt * 4000L) // Wait 4s, 8s, 12s backoff
+            // If rate limits were encountered, back off progressively to allow the 60-second quota bucket to refresh
+            if (attempt < maxAttempts) {
+                val backoffMs = if (anyRateLimitHit) {
+                    when (attempt) {
+                        1 -> 8_000L
+                        2 -> 20_000L
+                        3 -> 35_000L
+                        4 -> 55_000L
+                        else -> 65_000L
+                    }
+                } else {
+                    attempt * 4_000L
+                }
+                delay(backoffMs)
             }
         }
 
@@ -134,6 +152,29 @@ class GeminiTranscriber(
         content.add("parts", parts)
         contents.add(content)
         root.add("contents", contents)
+
+        // Verbatim transcription generation configuration
+        val genConfig = JsonObject()
+        genConfig.addProperty("temperature", 0.2)
+        genConfig.addProperty("maxOutputTokens", 8192)
+        root.add("generationConfig", genConfig)
+
+        // Safety settings: religious Dhamma talks often discuss suffering (dukkha), death, sickness, or karma.
+        // Disable aggressive filters so sermons are never falsely blocked.
+        val safetySettings = com.google.gson.JsonArray()
+        val categories = listOf(
+            "HARM_CATEGORY_HARASSMENT",
+            "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT"
+        )
+        for (cat in categories) {
+            val rule = JsonObject()
+            rule.addProperty("category", cat)
+            rule.addProperty("threshold", "BLOCK_NONE")
+            safetySettings.add(rule)
+        }
+        root.add("safetySettings", safetySettings)
 
         return gson.toJson(root)
     }

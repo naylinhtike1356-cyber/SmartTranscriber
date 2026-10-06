@@ -134,6 +134,11 @@ class TranscribeWorker(
                     )
                 }
                 setProgress(workDataOf("completed" to completed, "total" to totalChunks))
+
+                // Polite pacing delay to prevent hitting free-tier 15 RPM burst limits on long Dhamma talks
+                if (index < totalChunks - 1) {
+                    kotlinx.coroutines.delay(1500L)
+                }
             }
 
             // Phase 3: Combine all chunks
