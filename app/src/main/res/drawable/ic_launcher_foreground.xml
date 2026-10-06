@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Document / Transcriber Card Base -->
+    <path
+        android:pathData="M32,24 C28.69,24 26,26.69 26,30 L26,78 C26,81.31 28.69,84 32,84 L76,84 C79.31,84 82,81.31 82,78 L82,30 C82,26.69 79.31,24 76,24 Z"
+        android:fillColor="#1E293B"
+        android:strokeWidth="1.5"
+        android:strokeColor="#334155" />
+
+    <!-- Document Card Glass Inner Gradient -->
+    <path
+        android:pathData="M32,24 C28.69,24 26,26.69 26,30 L26,78 C26,81.31 28.69,84 32,84 L76,84 C79.31,84 82,81.31 82,78 L82,30 C82,26.69 79.31,24 76,24 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="26"
+                android:startY="24"
+                android:endX="82"
+                android:endY="84"
+                android:type="linear">
+                <item android:offset="0" android:color="#3038BDF8" />
+                <item android:offset="0.4" android:color="#150EA5E9" />
+                <item android:offset="1" android:color="#206366F1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Top Badge Header: Sound Wave Visualizer Bars -->
+    <!-- Bar 1 -->
+    <path
+        android:pathData="M34,42 L34,48"
+        android:strokeWidth="3.5"
+        android:strokeColor="#06B6D4"
+        android:strokeLineCap="round" />
+
+    <!-- Bar 2 -->
+    <path
+        android:pathData="M40,36 L40,54"
+        android:strokeWidth="3.5"
+        android:strokeColor="#22D3EE"
+        android:strokeLineCap="round" />
+
+    <!-- Bar 3 -->
+    <path
+        android:pathData="M46,31 L46,59"
+        android:strokeWidth="3.5"
+        android:strokeColor="#38BDF8"
+        android:strokeLineCap="round" />
+
+    <!-- Bar 4 (Center peak) -->
+    <path
+        android:pathData="M52,34 L52,56"
+        android:strokeWidth="3.5"
+        android:strokeColor="#818CF8"
+        android:strokeLineCap="round" />
+
+    <!-- Bar 5 -->
+    <path
+        android:pathData="M58,38 L58,52"
+        android:strokeWidth="3.5"
+        android:strokeColor="#A78BFA"
+        android:strokeLineCap="round" />
+
+    <!-- Bar 6 -->
+    <path
+        android:pathData="M64,43 L64,47"
+        android:strokeWidth="3.5"
+        android:strokeColor="#C084FC"
+        android:strokeLineCap="round" />
+
+    <!-- Transcription Text Lines (Output from sound) -->
+    <!-- Text Line 1 -->
+    <path
+        android:pathData="M34,66 L74,66"
+        android:strokeWidth="3"
+        android:strokeColor="#F1F5F9"
+        android:strokeLineCap="round" />
+
+    <!-- Text Line 2 -->
+    <path
+        android:pathData="M34,73 L62,73"
+        android:strokeWidth="3"
+        android:strokeColor="#94A3B8"
+        android:strokeLineCap="round" />
+
+    <!-- AI Intelligence Glowing Spark (Top-Right) -->
+    <!-- Big 4-point Sparkle -->
+    <path
+        android:pathData="M76,26 C76,29.5 78.5,32 82,32 C78.5,32 76,34.5 76,38 C76,34.5 73.5,32 70,32 C73.5,32 76,29.5 76,26 Z"
+        android:fillColor="#FACC15" />
+
+    <!-- Small Sparkle Accent -->
+    <path
+        android:pathData="M83,21 C83,22.5 84,23.5 85.5,23.5 C84,23.5 83,24.5 83,26 C83,24.5 82,23.5 80.5,23.5 C82,23.5 83,22.5 83,21 Z"
+        android:fillColor="#FDE047" />
+
+</vector>

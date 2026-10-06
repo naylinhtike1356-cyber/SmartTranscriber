@@ -161,6 +161,50 @@ class TranscribeWorker(
                 )
             }
 
+            // Optional auto-export to Notion if enabled in settings
+            val notionEnabled = settings.notionEnabledFlow.first()
+            val notionAutoSync = settings.notionAutoSyncFlow.first()
+            val notionKey = settings.notionApiKeyFlow.first()
+            val notionDbId = settings.notionDatabaseIdFlow.first()
+
+            if (notionEnabled && notionAutoSync && notionKey.isNotBlank() && notionDbId.isNotBlank() && finalTranscript.isNotBlank()) {
+                try {
+                    repository.updateJob(jobId) { it.copy(notionSyncState = TranscribeJob.NOTION_SYNCING) }
+                    val exporter = NotionExporter(notionKey, notionDbId)
+                    val metadata = mapOf(
+                        "Source" to job.fileName,
+                        "Duration" to job.formattedDuration(),
+                        "Language" to job.language,
+                        "Chunks" to "$totalChunks parts"
+                    )
+                    val result = exporter.exportTranscript(
+                        title = job.fileName.substringBeforeLast('.').take(100),
+                        fullTranscript = finalTranscript,
+                        metadata = metadata
+                    )
+                    if (result.success) {
+                        repository.updateJob(jobId) {
+                            it.copy(
+                                notionSyncState = TranscribeJob.NOTION_SYNCED,
+                                notionPageUrl = result.pageUrl,
+                                notionError = ""
+                            )
+                        }
+                    } else {
+                        repository.updateJob(jobId) {
+                            it.copy(
+                                notionSyncState = TranscribeJob.NOTION_FAILED,
+                                notionError = result.errorMessage
+                            )
+                        }
+                    }
+                } catch (ne: Exception) {
+                    repository.updateJob(jobId) {
+                        it.copy(notionSyncState = TranscribeJob.NOTION_FAILED, notionError = ne.message.orEmpty())
+                    }
+                }
+            }
+
             return Result.success()
         } catch (e: CancellationException) {
             throw e

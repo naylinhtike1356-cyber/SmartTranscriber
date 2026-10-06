@@ -15,7 +15,10 @@ class SettingsRepository(private val context: Context) {
         private val KEY_GEMINI_KEYS = stringPreferencesKey("gemini_api_keys")
         private val KEY_NOTION_API_KEY = stringPreferencesKey("notion_api_key")
         private val KEY_NOTION_DATABASE_ID = stringPreferencesKey("notion_database_id")
+        private val KEY_NOTION_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("notion_enabled")
+        private val KEY_NOTION_AUTO_SYNC = androidx.datastore.preferences.core.booleanPreferencesKey("notion_auto_sync")
         private val KEY_DEFAULT_LANGUAGE = stringPreferencesKey("default_language")
+        private val KEY_CUSTOM_UPDATE_URL = stringPreferencesKey("custom_update_url")
     }
 
     val geminiKeysFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
@@ -38,8 +41,20 @@ class SettingsRepository(private val context: Context) {
         prefs[KEY_NOTION_DATABASE_ID].orEmpty()
     }
 
+    val notionEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_NOTION_ENABLED] ?: false
+    }
+
+    val notionAutoSyncFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_NOTION_AUTO_SYNC] ?: false
+    }
+
     val defaultLanguageFlow: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[KEY_DEFAULT_LANGUAGE] ?: "my-MM"
+    }
+
+    val customUpdateUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_CUSTOM_UPDATE_URL].orEmpty()
     }
 
     suspend fun saveGeminiKeys(keysRaw: String) {
@@ -60,9 +75,27 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveNotionEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NOTION_ENABLED] = enabled
+        }
+    }
+
+    suspend fun saveNotionAutoSync(autoSync: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NOTION_AUTO_SYNC] = autoSync
+        }
+    }
+
     suspend fun saveDefaultLanguage(language: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_DEFAULT_LANGUAGE] = language
+        }
+    }
+
+    suspend fun saveCustomUpdateUrl(url: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CUSTOM_UPDATE_URL] = url.trim()
         }
     }
 }

@@ -40,6 +40,9 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     private val _snackBarMessages = MutableSharedFlow<String>()
     val snackBarMessages: SharedFlow<String> = _snackBarMessages.asSharedFlow()
 
+    val allJobs: StateFlow<List<TranscribeJob>> = repository.jobsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val filteredJobs: StateFlow<List<TranscribeJob>> = combine(
         repository.jobsFlow,
         _currentFilter
@@ -54,7 +57,13 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     val rawGeminiKeys = settingsRepo.geminiKeysRawFlow.stateIn(viewModelScope, SharingStarted.Eagerly, "")
     val notionApiKey = settingsRepo.notionApiKeyFlow.stateIn(viewModelScope, SharingStarted.Eagerly, "")
     val notionDatabaseId = settingsRepo.notionDatabaseIdFlow.stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    val notionEnabled = settingsRepo.notionEnabledFlow.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val notionAutoSync = settingsRepo.notionAutoSyncFlow.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val defaultLanguage = settingsRepo.defaultLanguageFlow.stateIn(viewModelScope, SharingStarted.Eagerly, "my-MM")
+    val customUpdateUrl = settingsRepo.customUpdateUrlFlow.stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    val updateManager = UpdateManager(application)
+    val updateState = updateManager.updateState
 
     fun setFilter(filter: JobFilter) {
         _currentFilter.value = filter
@@ -203,14 +212,51 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         geminiKeys: String,
         notionKey: String,
         notionDbId: String,
-        language: String
+        notionEnabled: Boolean,
+        notionAutoSync: Boolean,
+        language: String,
+        customUpdateUrl: String
     ) {
         viewModelScope.launch {
             settingsRepo.saveGeminiKeys(geminiKeys)
             settingsRepo.saveNotionApiKey(notionKey)
             settingsRepo.saveNotionDatabaseId(notionDbId)
+            settingsRepo.saveNotionEnabled(notionEnabled)
+            settingsRepo.saveNotionAutoSync(notionAutoSync)
             settingsRepo.saveDefaultLanguage(language)
-            _snackBarMessages.emit("ချိန်ညှိချက်များ သိမ်းဆည်းပြီးပါပြီ")
+            settingsRepo.saveCustomUpdateUrl(customUpdateUrl)
+            _snackBarMessages.emit("ချိန်ညှိချက်များ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ")
         }
+    }
+
+    fun exportTranscriptToUri(uri: Uri, text: String) {
+        val success = TranscriptFileManager.writeToSelectedUri(getApplication(), uri, text)
+        viewModelScope.launch {
+            if (success) {
+                _snackBarMessages.emit("စာသားဖိုင် အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ (.txt)")
+            } else {
+                _snackBarMessages.emit("စာသားဖိုင် သိမ်းဆည်းရာတွင် အမှားဖြစ်ပါသည်")
+            }
+        }
+    }
+
+    fun checkAppUpdate(currentVersion: String, customUrl: String? = null) {
+        viewModelScope.launch {
+            updateManager.checkUpdate(currentVersion, customUrl)
+        }
+    }
+
+    fun downloadAndInstallUpdate(release: AppReleaseInfo) {
+        viewModelScope.launch {
+            updateManager.downloadAndInstall(release)
+        }
+    }
+
+    fun installDownloadedApk(apkFile: java.io.File) {
+        updateManager.promptInstall(apkFile)
+    }
+
+    fun resetUpdateState() {
+        updateManager.resetState()
     }
 }
