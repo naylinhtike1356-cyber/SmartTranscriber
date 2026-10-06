@@ -14,7 +14,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,7 +30,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -55,7 +53,7 @@ class MainActivity : ComponentActivity() {
                 val snackbarHostState = remember { SnackbarHostState() }
                 var showSettingsDialog by remember { mutableStateOf(false) }
 
-                // Text export launcher for saving .txt directly to device storage
+                // Text export launcher for saving .txt directly to user selected storage folder
                 var textToExport by remember { mutableStateOf<String?>(null) }
                 val exportTextLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.CreateDocument("text/plain")
@@ -92,8 +90,9 @@ class MainActivity : ComponentActivity() {
                             onClick = { audioPicker.launch("audio/*") },
                             containerColor = MaterialTheme.colorScheme.primary,
                             contentColor = MaterialTheme.colorScheme.onPrimary,
+                            shape = RoundedCornerShape(16.dp),
                             icon = { Icon(Icons.Default.Add, contentDescription = "Add Audio") },
-                            text = { Text("အသံဖိုင်ထည့်ရန်", fontWeight = FontWeight.Bold) }
+                            text = { Text("အသံဖိုင် / တရားတော် ထည့်ရန်", fontWeight = FontWeight.Bold, fontSize = 14.sp) }
                         )
                     }
                 ) { innerPadding ->
@@ -164,7 +163,7 @@ fun TranscriberTopBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(38.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
@@ -173,10 +172,10 @@ fun TranscriberTopBar(
                         imageVector = Icons.Default.GraphicEq,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -190,16 +189,16 @@ fun TranscriberTopBar(
                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                         ) {
                             Text(
-                                text = "AI",
+                                text = "PRO AI",
                                 fontSize = 10.sp,
-                                fontWeight = FontWeight.ExtraBold,
+                                fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                             )
                         }
                     }
                     Text(
-                        text = "အသံဖိုင်မှ စာသားပြောင်းစနစ်",
+                        text = "တရားတော်နှင့် အသံဖိုင်များ စာသားပြောင်းစနစ်",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -208,7 +207,7 @@ fun TranscriberTopBar(
         },
         actions = {
             IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Default.Settings, contentDescription = "Settings")
+                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onSurface)
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
@@ -246,7 +245,7 @@ fun TranscriberMainContent(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 86.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(jobs, key = { it.id }) { job ->
@@ -278,26 +277,26 @@ fun FilterTabRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         FilterChip(
             selected = currentFilter == JobFilter.ALL,
             onClick = { onSelect(JobFilter.ALL) },
-            label = { Text("အားလုံး ($totalCount)") },
-            shape = RoundedCornerShape(20.dp)
+            label = { Text("အားလုံး ($totalCount)", fontSize = 13.sp) },
+            shape = RoundedCornerShape(12.dp)
         )
         FilterChip(
             selected = currentFilter == JobFilter.ACTIVE,
             onClick = { onSelect(JobFilter.ACTIVE) },
-            label = { Text("လုပ်ဆောင်ဆဲ ($activeCount)") },
-            shape = RoundedCornerShape(20.dp)
+            label = { Text("လုပ်ဆောင်ဆဲ ($activeCount)", fontSize = 13.sp) },
+            shape = RoundedCornerShape(12.dp)
         )
         FilterChip(
             selected = currentFilter == JobFilter.COMPLETED,
             onClick = { onSelect(JobFilter.COMPLETED) },
-            label = { Text("ပြီးစီး ($completedCount)") },
-            shape = RoundedCornerShape(20.dp)
+            label = { Text("ပြီးစီး ($completedCount)", fontSize = 13.sp) },
+            shape = RoundedCornerShape(12.dp)
         )
     }
 }
@@ -316,40 +315,41 @@ fun EmptyJobsView(onPickAudio: () -> Unit) {
         ) {
             Box(
                 modifier = Modifier
-                    .size(90.dp)
+                    .size(86.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.Audiotrack,
                     contentDescription = null,
-                    modifier = Modifier.size(44.dp),
+                    modifier = Modifier.size(42.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(18.dp))
             Text(
                 text = "အသံဖိုင် မရှိသေးပါ",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "MP3, M4A, WAV, AAC, FLAC အသံဖိုင်များကို ရွေးချယ်ပြီး အသံမှ စာသားအဖြစ် လျင်မြန်စွာ ပြောင်းလဲနိုင်ပါသည်",
+                text = "တရားတော်များ၊ အသံသွင်းဖိုင်များ (MP3, M4A, WAV, AAC) ကို ထည့်သွင်းပြီး အချိန်အကန့်အသတ်မရှိ စာသားပြောင်းနိုင်ပါသည်",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 lineHeight = 22.sp
             )
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             Button(
                 onClick = onPickAudio,
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.UploadFile, contentDescription = null)
+                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("အသံဖိုင် ရွေးချယ်မည် (Add Audio)")
+                Text("အသံဖိုင် ရွေးချယ်မည်", fontSize = 14.sp)
             }
         }
     }
@@ -377,19 +377,19 @@ fun TranscribeJobCard(
             },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val iconBg = when (job.state) {
-                    TranscribeJob.STATE_COMPLETED -> Emerald500.copy(alpha = 0.2f)
-                    TranscribeJob.STATE_PROCESSING -> Cyan500.copy(alpha = 0.2f)
-                    TranscribeJob.STATE_ERROR -> Rose500.copy(alpha = 0.2f)
-                    else -> Indigo500.copy(alpha = 0.2f)
+                    TranscribeJob.STATE_COMPLETED -> Emerald500.copy(alpha = 0.15f)
+                    TranscribeJob.STATE_PROCESSING -> Cyan500.copy(alpha = 0.15f)
+                    TranscribeJob.STATE_ERROR -> Rose500.copy(alpha = 0.15f)
+                    else -> Indigo500.copy(alpha = 0.15f)
                 }
                 val iconTint = when (job.state) {
                     TranscribeJob.STATE_COMPLETED -> Emerald500
@@ -400,8 +400,8 @@ fun TranscribeJobCard(
 
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(10.dp))
                         .background(iconBg),
                     contentAlignment = Alignment.Center
                 ) {
@@ -409,7 +409,7 @@ fun TranscribeJobCard(
                         imageVector = if (job.state == TranscribeJob.STATE_COMPLETED) Icons.Default.CheckCircle else Icons.Default.Audiotrack,
                         contentDescription = null,
                         tint = iconTint,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
@@ -432,7 +432,7 @@ fun TranscribeJobCard(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "• ${job.language}",
+                            text = "• မြန်မာ",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -444,25 +444,25 @@ fun TranscribeJobCard(
 
             // Progress Bar & Stats
             if (job.state in setOf(TranscribeJob.STATE_PROCESSING, TranscribeJob.STATE_PREPARING, TranscribeJob.STATE_PAUSED)) {
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 LinearProgressIndicator(
                     progress = { job.progressPercent },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(6.dp)
+                        .height(5.dp)
                         .clip(RoundedCornerShape(3.dp)),
                     color = if (job.state == TranscribeJob.STATE_PAUSED) Amber500 else MaterialTheme.colorScheme.primary,
                     trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(5.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     val progressLabel = when (job.state) {
-                        TranscribeJob.STATE_PREPARING -> "အသံဖိုင် အပိုင်းခွဲခြမ်းနေပါသည်..."
-                        TranscribeJob.STATE_PAUSED -> "ခေတ္တရပ်ထားပါသည် (Paused)"
+                        TranscribeJob.STATE_PREPARING -> "အသံဖိုင် ခွဲခြမ်းနေပါသည်..."
+                        TranscribeJob.STATE_PAUSED -> "ခေတ္တရပ်ထားသည် (Paused)"
                         else -> "အပိုင်း ${job.completedChunks}/${job.totalChunks} (${(job.progressPercent * 100).toInt()}%)"
                     }
                     Text(
@@ -484,7 +484,7 @@ fun TranscribeJobCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
@@ -496,9 +496,9 @@ fun TranscribeJobCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // Action Row
             Row(
@@ -506,32 +506,32 @@ fun TranscribeJobCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Secondary actions: Open in Reader & Save text
+                // Secondary actions: Open in Reader, Save text, Notion
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (job.transcript.isNotBlank() || job.state == TranscribeJob.STATE_COMPLETED) {
                         // Open in Reader App
                         FilledTonalIconButton(
                             onClick = onOpenReaderApp,
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 Icons.Default.ChromeReaderMode,
                                 contentDescription = "Open in Reader App",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(17.dp)
                             )
                         }
 
                         // Save as .txt
                         FilledTonalIconButton(
                             onClick = onSaveTextFile,
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(34.dp)
                         ) {
                             Icon(
                                 Icons.Default.SaveAlt,
                                 contentDescription = "Save .txt",
                                 tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(17.dp)
                             )
                         }
 
@@ -539,12 +539,12 @@ fun TranscribeJobCard(
                         if (notionEnabled) {
                             FilledTonalIconButton(
                                 onClick = onSyncNotion,
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.size(34.dp)
                             ) {
                                 when (job.notionSyncState) {
-                                    TranscribeJob.NOTION_SYNCED -> Icon(Icons.Default.CheckCircle, contentDescription = "Synced", tint = Emerald500, modifier = Modifier.size(18.dp))
-                                    TranscribeJob.NOTION_SYNCING -> CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                    else -> Icon(Icons.Default.CloudUpload, contentDescription = "Sync to Notion", tint = Indigo500, modifier = Modifier.size(18.dp))
+                                    TranscribeJob.NOTION_SYNCED -> Icon(Icons.Default.CheckCircle, contentDescription = "Synced", tint = Emerald500, modifier = Modifier.size(17.dp))
+                                    TranscribeJob.NOTION_SYNCING -> CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
+                                    else -> Icon(Icons.Default.CloudUpload, contentDescription = "Sync to Notion", tint = Indigo500, modifier = Modifier.size(17.dp))
                                 }
                             }
                         }
@@ -572,9 +572,9 @@ fun TranscribeJobCard(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("ဖတ်ရန်", fontSize = 13.sp)
+                            Text("ဖတ်မည်", fontSize = 13.sp)
                         }
                     }
 
@@ -582,7 +582,7 @@ fun TranscribeJobCard(
                         Icon(
                             Icons.Default.DeleteOutline,
                             contentDescription = "Delete",
-                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                         )
                     }
                 }
@@ -595,7 +595,7 @@ fun TranscribeJobCard(
 fun StatusBadge(state: String) {
     val (label, bg, fg) = when (state) {
         TranscribeJob.STATE_COMPLETED -> Triple("ပြီးစီး", Emerald500.copy(alpha = 0.15f), Emerald500)
-        TranscribeJob.STATE_PROCESSING -> Triple("ပြောင်းနေဆဲ", Cyan500.copy(alpha = 0.15f), Cyan500)
+        TranscribeJob.STATE_PROCESSING -> Triple("ပြောင်းဆဲ", Cyan500.copy(alpha = 0.15f), Cyan500)
         TranscribeJob.STATE_PREPARING -> Triple("ပြင်ဆင်ဆဲ", Indigo500.copy(alpha = 0.15f), Indigo500)
         TranscribeJob.STATE_PAUSED -> Triple("ရပ်ထားသည်", Amber500.copy(alpha = 0.15f), Amber500)
         TranscribeJob.STATE_ERROR -> Triple("အမှား", Rose500.copy(alpha = 0.15f), Rose500)
@@ -606,7 +606,7 @@ fun StatusBadge(state: String) {
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .background(bg)
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 8.dp, vertical = 3.dp)
     ) {
         Text(
             text = label,
@@ -639,8 +639,8 @@ fun TranscriptReaderSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.92f)
-                .padding(horizontal = 18.dp)
-                .padding(bottom = 18.dp)
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp)
         ) {
             // Header
             Row(
@@ -651,13 +651,13 @@ fun TranscriptReaderSheet(
                     Text(
                         text = job.fileName,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
+                        fontSize = 16.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "စာလုံးရေ ${job.transcript.length} လုံး • စကားလုံး ${job.transcript.split(Regex("\\s+")).filter { it.isNotBlank() }.size} လုံး",
+                        text = "စာလုံးရေ ${job.transcript.length} • စကားလုံး ${job.transcript.split(Regex("\\s+")).filter { it.isNotBlank() }.size} လုံး",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -687,12 +687,12 @@ fun TranscriptReaderSheet(
                         onClick = { if (fontSizeSp < 26) fontSizeSp += 2 },
                         modifier = Modifier.size(32.dp)
                     ) {
-                        Text("A+", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("A+", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Notion Page link if synced
             if (notionEnabled && job.notionPageUrl.isNotBlank()) {
@@ -705,7 +705,7 @@ fun TranscriptReaderSheet(
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(job.notionPageUrl))
                             context.startActivity(intent)
                         }
-                        .padding(bottom = 8.dp)
+                        .padding(bottom = 6.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -714,7 +714,7 @@ fun TranscriptReaderSheet(
                         Icon(Icons.Default.CloudDone, contentDescription = null, tint = Indigo500, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Notion Link ဖြင့် ကြည့်ရန်",
+                            text = "Notion Page ဖွင့်ရန်",
                             style = MaterialTheme.typography.bodySmall,
                             color = Indigo500,
                             fontWeight = FontWeight.SemiBold
@@ -730,7 +730,7 @@ fun TranscriptReaderSheet(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(vertical = 12.dp)
+                    .padding(vertical = 10.dp)
                     .verticalScroll(rememberScrollState())
             ) {
                 SelectionContainer {
@@ -745,7 +745,7 @@ fun TranscriptReaderSheet(
             }
 
             HorizontalDivider()
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Primary Action Row: Open with Phone Reader & Save .txt
             Row(
@@ -775,7 +775,7 @@ fun TranscriptReaderSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Secondary Action Row: Copy, Share, Notion
             Row(
@@ -791,7 +791,7 @@ fun TranscriptReaderSheet(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("ကူးယူရန်", fontSize = 12.sp)
                 }
@@ -808,7 +808,7 @@ fun TranscriptReaderSheet(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("မျှဝေရန်", fontSize = 12.sp)
                 }
@@ -819,7 +819,7 @@ fun TranscriptReaderSheet(
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(if (job.notionSyncState == TranscribeJob.NOTION_SYNCED) "Notion (ပြီး)" else "Notion ပို့", fontSize = 12.sp)
                     }
@@ -851,7 +851,6 @@ fun SettingsDialog(
     var notionAutoSync by remember(notionAutoSyncState) { mutableStateOf(notionAutoSyncState) }
     var selectedLang by remember(defaultLang) { mutableStateOf(defaultLang) }
     var updateUrlInput by remember(customUpdateUrl) { mutableStateOf(customUpdateUrl) }
-    var showAdvancedUpdate by remember { mutableStateOf(false) }
 
     val currentAppVersion = remember {
         try {
@@ -867,16 +866,16 @@ fun SettingsDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .fillMaxHeight(0.90f),
-            shape = RoundedCornerShape(24.dp),
+                .fillMaxWidth(0.92f)
+                .fillMaxHeight(0.88f),
+            shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp)
+                    .padding(18.dp)
             ) {
                 // Header
                 Row(
@@ -887,70 +886,55 @@ fun SettingsDialog(
                     Text(
                         text = "ချိန်ညှိချက်များ (Settings)",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 19.sp
+                        fontSize = 18.sp
                     )
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = "Close")
                     }
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
 
                 // Scrollable Content
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     // Section 1: Gemini AI
-                    SettingsSection(title = "၁။ Gemini AI ချိန်ညှိချက်") {
+                    SettingsSection(title = "၁။ Gemini AI Key (တရားတော်များ သီးသန့်)") {
                         OutlinedTextField(
                             value = keysInput,
                             onValueChange = { keysInput = it },
                             label = { Text("Gemini API Keys") },
-                            placeholder = { Text("Key တစ်ခုထက်မက ထည့်လိုပါက ကော်မာ (,) ခြားပါ") },
+                            placeholder = { Text("AI Studio Key ၁ ခု (သို့) ၂ ခု ကော်မာ (,) ခြားထည့်ပါ") },
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 2,
-                            maxLines = 4
+                            maxLines = 3
                         )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text("ဘာသာစကား (Language):", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = selectedLang == "my-MM",
-                                onClick = { selectedLang = "my-MM" },
-                                label = { Text("မြန်မာ (Myanmar)") }
-                            )
-                            FilterChip(
-                                selected = selectedLang == "en-US",
-                                onClick = { selectedLang = "en-US" },
-                                label = { Text("English") }
-                            )
-                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "💡 အကြံပြုချက်: အချိန် ၂-၃ နာရီကြာ တရားတော်များကို အကန့်အသတ် (Limit) မရှိ လျင်မြန်စွာ ပြောင်းနိုင်ရန် Google AI Studio မှ အခမဲ့ API Key တစ်ခုထက်မက ကော်မာ (,) ခြား၍ ထည့်နိုင်ပါသည်",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 11.5.sp,
+                            lineHeight = 16.sp
+                        )
                     }
 
-                    // Section 2: Notion Integration (Toggle ON/OFF)
-                    SettingsSection(title = "၂။ Notion ချိတ်ဆက်မှု (Notion Sync)") {
+                    // Section 2: Notion Toggle
+                    SettingsSection(title = "၂။ Notion ချိတ်ဆက်မှု") {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Notion ချိတ်ဆက်မှု အသုံးပြုမည်",
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = if (notionEnabled) "ဖွင့်ထားပါသည် (Enabled)" else "ပိတ်ထားပါသည် (Disabled)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (notionEnabled) Emerald500 else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            Text(
+                                text = "Notion သို့ ပို့မည်",
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
                             Switch(
                                 checked = notionEnabled,
                                 onCheckedChange = { notionEnabled = it }
@@ -961,26 +945,18 @@ fun SettingsDialog(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 10.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    .padding(top = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "အလိုအလျောက် Notion သို့ ပို့မည်",
-                                            fontWeight = FontWeight.Medium,
-                                            fontSize = 13.sp
-                                        )
-                                        Text(
-                                            text = "စာသားပြောင်းပြီးတိုင်း Notion သို့ တန်းပို့ပါမည်",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    Text(
+                                        text = "အသံဖိုင်ပြီးတိုင်း အလိုအလျောက် ပို့မည်",
+                                        fontSize = 13.sp
+                                    )
                                     Switch(
                                         checked = notionAutoSync,
                                         onCheckedChange = { notionAutoSync = it }
@@ -999,15 +975,15 @@ fun SettingsDialog(
                                     value = notionDbInput,
                                     onValueChange = { notionDbInput = it },
                                     label = { Text("Notion Database ID") },
-                                    placeholder = { Text("32-character database id") },
+                                    placeholder = { Text("32-character ID") },
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
                         }
                     }
 
-                    // Section 3: In-App Updates (Requirement 5)
-                    SettingsSection(title = "၃။ App ဗားရှင်း နှင့် အပ်ဒိတ် (App Updates)") {
+                    // Section 3: In-App Updates
+                    SettingsSection(title = "၃။ App Update (တိုက်ရိုက် အဆင့်မြှင့်တင်ခြင်း)") {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1015,8 +991,8 @@ fun SettingsDialog(
                         ) {
                             Column {
                                 Text(
-                                    text = "လက်ရှိ ဗားရှင်း (Current Version)",
-                                    fontSize = 13.sp,
+                                    text = "လက်ရှိ ဗားရှင်း",
+                                    fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
@@ -1032,57 +1008,57 @@ fun SettingsDialog(
                                     viewModel.checkAppUpdate(currentAppVersion, updateUrlInput)
                                 },
                                 enabled = updateUiState !is UpdateUiState.Checking && updateUiState !is UpdateUiState.Downloading,
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(8.dp)
                             ) {
                                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("စစ်ဆေးမည် (Check)")
+                                Text("စစ်ဆေးမည်", fontSize = 13.sp)
                             }
                         }
 
                         // Update Status Box
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         when (val state = updateUiState) {
                             is UpdateUiState.Checking -> {
                                 Surface(
-                                    shape = RoundedCornerShape(10.dp),
+                                    shape = RoundedCornerShape(8.dp),
                                     color = MaterialTheme.colorScheme.surfaceVariant,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(12.dp),
+                                        modifier = Modifier.padding(10.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Text("ဗားရှင်းအသစ် ရှိမရှိ စစ်ဆေးနေပါသည်...", fontSize = 13.sp)
+                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text("ဗားရှင်းအသစ် ရှိမရှိ စစ်ဆေးနေပါသည်...", fontSize = 12.5.sp)
                                     }
                                 }
                             }
                             is UpdateUiState.AlreadyUpToDate -> {
                                 Surface(
-                                    shape = RoundedCornerShape(10.dp),
+                                    shape = RoundedCornerShape(8.dp),
                                     color = Emerald500.copy(alpha = 0.12f),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(12.dp),
+                                        modifier = Modifier.padding(10.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Emerald500, modifier = Modifier.size(20.dp))
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Text("သင့် App သည် အသစ်ဆုံး ဗားရှင်း ဖြစ်ပါသည်", color = Emerald500, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Emerald500, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("သင့် App သည် အသစ်ဆုံး ဗားရှင်း ဖြစ်ပါသည်", color = Emerald500, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
                                     }
                                 }
                             }
                             is UpdateUiState.UpdateAvailable -> {
                                 Card(
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(10.dp),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column(modifier = Modifier.padding(14.dp)) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1091,7 +1067,7 @@ fun SettingsDialog(
                                             Text(
                                                 text = "ဗားရှင်းအသစ် ရရှိနိုင်ပါသည်: v${state.release.version}",
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 14.sp,
+                                                fontSize = 13.5.sp,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                             if (state.release.formattedSize().isNotBlank()) {
@@ -1103,15 +1079,15 @@ fun SettingsDialog(
                                             }
                                         }
 
-                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = state.release.releaseNotes,
                                             style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 4,
+                                            maxLines = 3,
                                             overflow = TextOverflow.Ellipsis
                                         )
 
-                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Spacer(modifier = Modifier.height(8.dp))
                                         Button(
                                             onClick = { viewModel.downloadAndInstallUpdate(state.release) },
                                             modifier = Modifier.fillMaxWidth(),
@@ -1130,27 +1106,27 @@ fun SettingsDialog(
                                     Text(
                                         text = "ဒေါင်းလုဒ်ဆွဲနေသည်... ${(state.progressPercent * 100).toInt()}%",
                                         fontWeight = FontWeight.SemiBold,
-                                        fontSize = 13.sp
+                                        fontSize = 12.5.sp
                                     )
-                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     LinearProgressIndicator(
                                         progress = { state.progressPercent },
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(8.dp)
-                                            .clip(RoundedCornerShape(4.dp))
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp))
                                     )
                                 }
                             }
                             is UpdateUiState.ReadyToInstall -> {
                                 Surface(
-                                    shape = RoundedCornerShape(10.dp),
+                                    shape = RoundedCornerShape(8.dp),
                                     color = Emerald500.copy(alpha = 0.15f),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text("ဒေါင်းလုဒ် အောင်မြင်စွာ ပြီးစီးပါပြီ!", fontWeight = FontWeight.Bold, color = Emerald500)
-                                        Spacer(modifier = Modifier.height(8.dp))
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text("ဒေါင်းလုဒ် အောင်မြင်စွာ ပြီးပါပြီ!", fontWeight = FontWeight.Bold, color = Emerald500, fontSize = 13.sp)
+                                        Spacer(modifier = Modifier.height(6.dp))
                                         Button(
                                             onClick = { viewModel.installDownloadedApk(state.apkFile) },
                                             modifier = Modifier.fillMaxWidth(),
@@ -1166,7 +1142,7 @@ fun SettingsDialog(
                             }
                             is UpdateUiState.Error -> {
                                 Surface(
-                                    shape = RoundedCornerShape(10.dp),
+                                    shape = RoundedCornerShape(8.dp),
                                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
@@ -1174,39 +1150,18 @@ fun SettingsDialog(
                                         text = "အမှား: ${state.message}",
                                         color = MaterialTheme.colorScheme.error,
                                         style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(10.dp)
+                                        modifier = Modifier.padding(8.dp)
                                     )
                                 }
                             }
                             else -> {}
                         }
-
-                        // Advanced update URL link
-                        Text(
-                            text = if (showAdvancedUpdate) "▲ Update လိပ်စာ ချိန်ညှိမှု ဝှက်မည်" else "▼ Update လိပ်စာ စိတ်ကြိုက် သတ်မှတ်မည်",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .clickable { showAdvancedUpdate = !showAdvancedUpdate }
-                                .padding(vertical = 4.dp)
-                        )
-
-                        AnimatedVisibility(visible = showAdvancedUpdate) {
-                            OutlinedTextField(
-                                value = updateUrlInput,
-                                onValueChange = { updateUrlInput = it },
-                                label = { Text("Custom Release JSON / API URL") },
-                                placeholder = { Text("https://api.github.com/repos/.../releases/latest") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-                HorizontalDivider()
                 Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Footer Buttons
                 Row(
@@ -1215,7 +1170,7 @@ fun SettingsDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("ပိတ်မည် (Cancel)")
+                        Text("ပိတ်မည်")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -1231,9 +1186,9 @@ fun SettingsDialog(
                             )
                             onDismiss()
                         },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text("သိမ်းဆည်းမည် (Save)")
+                        Text("သိမ်းဆည်းမည်")
                     }
                 }
             }
@@ -1247,20 +1202,20 @@ fun SettingsSection(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(14.dp)
+            modifier = Modifier.padding(12.dp)
         ) {
             Text(
                 text = title,
                 fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
+                fontSize = 14.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             content()
         }
     }

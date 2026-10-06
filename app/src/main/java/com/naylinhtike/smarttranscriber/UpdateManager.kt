@@ -77,6 +77,11 @@ class UpdateManager(private val context: Context) {
                     .build()
 
                 httpClient.newCall(request).execute().use { response ->
+                    if (response.code == 404) {
+                        // GitHub has no releases yet, meaning current is the latest version
+                        _updateState.value = UpdateUiState.AlreadyUpToDate
+                        return@withContext
+                    }
                     if (!response.isSuccessful) {
                         _updateState.value = UpdateUiState.Error("စစ်ဆေးမှု မအောင်မြင်ပါ (HTTP ${response.code})")
                         return@withContext
