@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlinx.coroutines.CancellationException
 
 enum class JobFilter {
     ALL,
@@ -65,6 +66,17 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     val updateManager = UpdateManager(application)
     val updateState = updateManager.updateState
 
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.listJobs().filter { it.isActive }.forEach { repository.enqueueWork(it.id) }
+        }
+        viewModelScope.launch {
+            repository.jobsFlow.collect { jobs ->
+                _selectedJob.value?.id?.let { id -> _selectedJob.value = jobs.firstOrNull { it.id == id } }
+            }
+        }
+    }
+
     fun setFilter(filter: JobFilter) {
         _currentFilter.value = filter
     }
@@ -75,6 +87,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
 
     fun importAudioUri(uri: Uri) {
         viewModelScope.launch {
+            var tempFile: File? = null
             try {
                 val app = getApplication<Application>()
                 var fileName = "audio_${System.currentTimeMillis()}.mp3"
@@ -89,29 +102,32 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
 
-                val tempFile = File(app.cacheDir, "import_${System.currentTimeMillis()}_$fileName")
+                val importedFile = File.createTempFile("import_", ".audio", app.cacheDir)
+                tempFile = importedFile
                 withContext(Dispatchers.IO) {
-                    app.contentResolver.openInputStream(uri)?.use { input ->
-                        tempFile.outputStream().use { output ->
+                    (app.contentResolver.openInputStream(uri) ?: error("အသံဖိုင်ကို ဖွင့်မရပါ။")).use { input ->
+                        importedFile.outputStream().use { output ->
                             input.copyTo(output)
                         }
                     }
                 }
 
-                val durationMs = readAudioDuration(tempFile)
-                val lang = defaultLanguage.value
+                val durationMs = withContext(Dispatchers.IO) { readAudioDuration(importedFile) }
+                val lang = settingsRepo.defaultLanguageFlow.first()
 
                 repository.createJob(
-                    sourceFile = tempFile,
+                    sourceFile = importedFile,
                     displayName = fileName,
                     durationMs = durationMs,
                     language = lang
                 )
 
-                tempFile.delete()
                 _snackBarMessages.emit("ဖိုင်ထည့်သွင်းပြီးပါပြီ: $fileName")
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _snackBarMessages.emit("အသံဖိုင် ထည့်သွင်းရာတွင် အမှားဖြစ်ပါသည်: ${e.message}")
+            } finally {
+                tempFile?.delete()
             }
         }
     }
@@ -119,10 +135,12 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     private fun readAudioDuration(file: File): Long {
         return try {
             val retriever = android.media.MediaMetadataRetriever()
-            retriever.setDataSource(file.absolutePath)
-            val time = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
-            retriever.release()
-            time?.toLongOrNull() ?: 0L
+            try {
+                retriever.setDataSource(file.absolutePath)
+                retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            } finally {
+                retriever.release()
+            }
         } catch (_: Exception) {
             0L
         }
@@ -130,21 +148,21 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
 
     fun pauseJob(jobId: String) {
         viewModelScope.launch {
-            repository.pauseJob(jobId)
+            withContext(Dispatchers.IO) { repository.pauseJob(jobId) }
             _snackBarMessages.emit("ခေတ္တရပ်နားထားပါသည်")
         }
     }
 
     fun resumeJob(jobId: String) {
         viewModelScope.launch {
-            repository.resumeJob(jobId)
+            withContext(Dispatchers.IO) { repository.resumeJob(jobId) }
             _snackBarMessages.emit("ပြန်လည်စတင်နေပါသည်")
         }
     }
 
     fun deleteJob(jobId: String) {
         viewModelScope.launch {
-            repository.deleteJob(jobId)
+            withContext(Dispatchers.IO) { repository.deleteJob(jobId) }
             if (_selectedJob.value?.id == jobId) {
                 _selectedJob.value = null
             }
@@ -242,7 +260,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
 
     fun checkAppUpdate(currentVersion: String, customUrl: String? = null) {
         viewModelScope.launch {
-            updateManager.checkUpdate(currentVersion, customUrl)
+            updateManager.checkUpdate(currentVersion, customUrl ?: settingsRepo.customUpdateUrlFlow.first())
         }
     }
 
@@ -254,6 +272,10 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
 
     fun installDownloadedApk(apkFile: java.io.File) {
         updateManager.promptInstall(apkFile)
+    }
+
+    fun resumePendingInstall() {
+        viewModelScope.launch { updateManager.resumePendingInstall() }
     }
 
     fun resetUpdateState() {

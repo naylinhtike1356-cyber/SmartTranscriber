@@ -16,6 +16,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
 import java.io.File
 import kotlinx.coroutines.sync.Mutex
 
@@ -49,6 +52,7 @@ class TranscribeWorker(
 
         val jobDir = repository.getJobDir(jobId)
         val chunksDir = File(jobDir, "chunks").apply { mkdirs() }
+        val checkpoints = ChunkCheckpoints(chunksDir)
         val sourceFile = File(jobDir, job.sourceName)
 
         if (!sourceFile.exists()) {
@@ -59,58 +63,74 @@ class TranscribeWorker(
         }
 
         try {
+            val sliceStarted = System.nanoTime()
+            val geminiKeys = settings.geminiKeysFlow.first()
+            if (geminiKeys.isEmpty()) throw GeminiApiException("Gemini API Key မရှိပါ။ Settings တွင် API Key ထည့်ပြီး ပြန်စမ်းပါ။", false)
             // Update notification
             setForeground(createNotification(job, "စတင်ပြင်ဆင်နေပါသည်..."))
 
             // Phase 1: Decoding audio to 16kHz WAV chunks
             val countManifest = File(chunksDir, "count.txt")
-            if (!countManifest.exists()) {
-                repository.updateJob(jobId) { it.copy(state = TranscribeJob.STATE_PREPARING, error = "") }
+            val storedCount = runCatching {
+                android.util.AtomicFile(countManifest).openRead().bufferedReader().use { it.readText().trim().toInt() }
+            }.getOrDefault(0).takeIf { it in 1..10_000 } ?: 0
+            val needsDecoding = storedCount <= 0 || (0 until storedCount).any {
+                checkpoints.read(it).isBlank() && File(chunksDir, "$it.wav").length() <= 44
+            }
+            if (needsDecoding) {
+                repository.updateJob(jobId) { if (!it.isActive) it else it.copy(state = TranscribeJob.STATE_PREPARING, error = "") }
                 setForeground(createNotification(job, "အသံဖိုင် ခွဲခြမ်းနေပါသည်..."))
 
-                chunksDir.listFiles()?.forEach { it.delete() }
-                val spans = AudioDecoder().decodeToWavChunks(sourceFile, chunksDir)
+                // Preserve completed text even if preparation was interrupted or a WAV went missing.
+                chunksDir.listFiles()?.filter { it.extension == "wav" }?.forEach { it.delete() }
+                val spans = AudioDecoder().decodeToWavChunks(sourceFile, chunksDir) { position, duration ->
+                    currentCoroutineContext().ensureActive()
+                    val percent = if (duration > 0) (position * 100 / duration).coerceIn(0, 100) else 0
+                    val status = "အသံဖိုင် ခွဲခြမ်းနေသည် ($percent%)..."
+                    repository.updateJob(jobId) { if (!it.isActive) it else it.copy(statusMessage = status) }
+                    setForeground(createNotification(job, status))
+                }
                 check(spans.isNotEmpty()) { "No valid audio frames decoded" }
 
-                File(chunksDir, "spans.json").writeText(Gson().toJson(spans))
-                File(chunksDir, "count.txt").writeText(spans.size.toString())
+                writeAtomicText(File(chunksDir, "spans.json"), Gson().toJson(spans))
+                writeAtomicText(countManifest, spans.size.toString())
             }
 
-            val totalChunks = File(chunksDir, "count.txt").readText().trim().toInt()
-            check(totalChunks > 0) { "Invalid chunk count" }
+            val totalChunks = android.util.AtomicFile(countManifest).openRead().bufferedReader().use { it.readText().trim().toInt() }
+            check(totalChunks in 1..10_000) { "Invalid chunk count" }
 
             repository.updateJob(jobId) {
                 it.copy(
-                    state = TranscribeJob.STATE_PROCESSING,
+                    state = if (it.isActive) TranscribeJob.STATE_PROCESSING else it.state,
                     totalChunks = totalChunks,
-                    completedChunks = countCompletedChunks(chunksDir, totalChunks)
+                    completedChunks = checkpoints.completed(totalChunks),
+                    transcript = checkpoints.transcript(totalChunks)
                 )
             }
 
             // Phase 2: Transcribe each chunk with Gemini
-            val geminiKeys = settings.geminiKeysFlow.first()
-            if (geminiKeys.isEmpty()) {
-                repository.updateJob(jobId) {
-                    it.copy(
-                        state = TranscribeJob.STATE_ERROR,
-                        error = "Gemini API Key မရှိပါ။ Settings တွင် API Key ထည့်ပြီး ပြန်စမ်းပါ။"
-                    )
-                }
-                return Result.failure()
-            }
-
-            val transcriber = GeminiTranscriber(geminiKeys)
+            val transcriber = GeminiTranscriber(geminiKeys, initialModel = job.geminiModel)
 
             for (index in 0 until totalChunks) {
+                currentCoroutineContext().ensureActive()
                 val currentJob = repository.getJob(jobId)
-                if (currentJob?.state == TranscribeJob.STATE_PAUSED) {
+                if (currentJob == null || !currentJob.isActive) {
                     return Result.success() // Stopped gracefully
                 }
 
-                val checkpoint = File(chunksDir, "$index.txt")
-                if (checkpoint.exists() && checkpoint.readText().isNotBlank()) {
+                if (checkpoints.read(index).isNotBlank()) {
                     File(chunksDir, "$index.wav").delete()
                     continue
+                }
+                // Release the foreground worker regularly; WorkManager resumes from durable checkpoints.
+                if (System.nanoTime() - sliceStarted >= 300_000_000_000L) {
+                    repository.updateJob(jobId) { if (!it.isActive) it else it.copy(
+                        state = TranscribeJob.STATE_QUEUED,
+                        statusMessage = "ပြီးထားသောအပိုင်းများကို သိမ်းထားသည်။ ဆက်လုပ်ရန် ခဏစောင့်နေသည်..."
+                    ) }
+                    currentCoroutineContext().ensureActive()
+                    repository.enqueueWork(jobId, androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE)
+                    return Result.success()
                 }
 
                 val wavFile = File(chunksDir, "$index.wav")
@@ -119,25 +139,30 @@ class TranscribeWorker(
                 }
 
                 val progressText = "အပိုင်း ${index + 1}/$totalChunks ကို စာသားပြောင်းနေသည်..."
+                repository.updateJob(jobId) { if (!it.isActive) it else it.copy(statusMessage = progressText, error = "") }
                 setForeground(createNotification(job.copy(completedChunks = index, totalChunks = totalChunks), progressText))
 
                 val chunkTranscript = transcriber.transcribeChunk(wavFile, job.language).trim()
-                checkpoint.writeText(chunkTranscript)
+                currentCoroutineContext().ensureActive()
+                checkpoints.save(index, chunkTranscript)
                 wavFile.delete() // Clean up disk immediately
 
-                val completed = countCompletedChunks(chunksDir, totalChunks)
+                val completed = checkpoints.completed(totalChunks)
                 repository.updateJob(jobId) {
-                    it.copy(
+                    if (!it.isActive) it else it.copy(
                         state = TranscribeJob.STATE_PROCESSING,
                         completedChunks = completed,
-                        totalChunks = totalChunks
+                        totalChunks = totalChunks,
+                        transcript = checkpoints.transcript(totalChunks),
+                        consecutiveFailures = 0,
+                        geminiModel = transcriber.lastSuccessfulModel
                     )
                 }
                 setProgress(workDataOf("completed" to completed, "total" to totalChunks))
 
-                // Polite pacing delay to prevent hitting free-tier 15 RPM burst limits on long Dhamma talks
+                // Avoid bursting consecutive uploads; quotas depend on the account and model.
                 if (index < totalChunks - 1) {
-                    kotlinx.coroutines.delay(1500L)
+                    delay(1500L)
                 }
             }
 
@@ -154,15 +179,18 @@ class TranscribeWorker(
             }
 
             val finalTranscript = fullTranscriptBuilder.toString().ifBlank { "[အသံ မကြားရပါ / No speech detected]" }
-            File(jobDir, "transcript.txt").writeText(finalTranscript)
+            currentCoroutineContext().ensureActive()
+            writeAtomicText(File(jobDir, "transcript.txt"), finalTranscript)
 
             repository.updateJob(jobId) {
-                it.copy(
+                if (!it.isActive) it else it.copy(
                     state = TranscribeJob.STATE_COMPLETED,
                     completedChunks = totalChunks,
                     totalChunks = totalChunks,
                     transcript = finalTranscript,
-                    error = ""
+                    error = "",
+                    statusMessage = "စာသားပြောင်းပြီးပါပြီ",
+                    consecutiveFailures = 0
                 )
             }
 
@@ -204,6 +232,7 @@ class TranscribeWorker(
                         }
                     }
                 } catch (ne: Exception) {
+                    if (ne is CancellationException) throw ne
                     repository.updateJob(jobId) {
                         it.copy(notionSyncState = TranscribeJob.NOTION_FAILED, notionError = ne.message.orEmpty())
                     }
@@ -214,18 +243,20 @@ class TranscribeWorker(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            repository.updateJob(jobId) {
-                if (it.state == TranscribeJob.STATE_PAUSED) it
-                else it.copy(state = TranscribeJob.STATE_ERROR, error = e.message.orEmpty().take(300))
+            currentCoroutineContext().ensureActive()
+            val updated = repository.updateJob(jobId) {
+                if (!it.isActive) it else {
+                    val failures = it.consecutiveFailures + 1
+                    val retry = e is GeminiApiException && e.retryable && failures < 5
+                    it.copy(
+                        state = if (retry) TranscribeJob.STATE_QUEUED else TranscribeJob.STATE_ERROR,
+                        error = e.message.orEmpty().take(300),
+                        statusMessage = if (retry) "ကွန်ရက် / quota ပြဿနာ။ ခဏစောင့်ပြီး အလိုအလျောက် ဆက်လုပ်မည် ($failures/5)။" else "မပြီးသေးသောအပိုင်းမှ ပြန်ဆက်နိုင်ပါသည်။",
+                        consecutiveFailures = failures
+                    )
+                }
             }
-            return Result.failure()
-        }
-    }
-
-    private fun countCompletedChunks(chunksDir: File, total: Int): Int {
-        return (0 until total).count {
-            val f = File(chunksDir, "$it.txt")
-            f.exists() && f.readText().isNotBlank()
+            return if (updated?.state == TranscribeJob.STATE_QUEUED) Result.retry() else Result.failure()
         }
     }
 

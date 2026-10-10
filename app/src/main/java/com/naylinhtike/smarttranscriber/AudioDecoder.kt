@@ -19,7 +19,11 @@ import java.nio.ByteOrder
 class AudioDecoder {
 
     @OptIn(UnstableApi::class)
-    suspend fun decodeToWavChunks(source: File, targetDirectory: File): List<AudioChunkSpan> {
+    suspend fun decodeToWavChunks(
+        source: File,
+        targetDirectory: File,
+        onProgress: suspend (Long, Long) -> Unit = { _, _ -> }
+    ): List<AudioChunkSpan> {
         check(targetDirectory.exists() || targetDirectory.mkdirs()) { "Cannot create output directory" }
 
         val extractor = MediaExtractor()
@@ -47,6 +51,8 @@ class AudioDecoder {
 
             extractor.selectTrack(track)
             val format = extractor.getTrackFormat(track)
+            val durationUs = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) else 0L
+            var lastProgressReport = 0L
             val mimeType = format.getString(MediaFormat.KEY_MIME) ?: error("Unknown audio mime type")
             val decoder = MediaCodec.createDecoderByType(mimeType)
             codec = decoder
@@ -88,6 +94,10 @@ class AudioDecoder {
                         val decodedFormat = decoder.outputFormat
                         val newRate = decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
                         val newChannels = decodedFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        check(!decodedFormat.containsKey(MediaFormat.KEY_PCM_ENCODING) ||
+                            decodedFormat.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT) {
+                            "Unsupported decoded audio sample format"
+                        }
                         sampleRate = newRate
                         channels = newChannels
                         check(sampleRate > 0 && channels > 0)
@@ -136,6 +146,11 @@ class AudioDecoder {
                                 }
                             }
                             outputEnded = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                            val now = System.nanoTime()
+                            if (now - lastProgressReport >= 1_000_000_000L) {
+                                onProgress(info.presentationTimeUs.coerceAtLeast(0) / 1000, durationUs / 1000)
+                                lastProgressReport = now
+                            }
                             lastProgressTime = System.nanoTime()
                             advanced = true
                         } finally {
@@ -151,9 +166,12 @@ class AudioDecoder {
 
             if (resampling) {
                 sonic.queueEndOfStream()
+                val drainStarted = System.nanoTime()
                 while (!sonic.isEnded) {
                     currentCoroutineContext().ensureActive()
+                    check(System.nanoTime() - drainStarted < 90_000_000_000L) { "Audio resampling timed out" }
                     drainSonic()
+                    if (!sonic.isEnded) delay(1)
                 }
             }
 

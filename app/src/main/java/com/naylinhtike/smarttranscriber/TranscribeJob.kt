@@ -15,7 +15,10 @@ data class TranscribeJob(
     val createdAt: Long = System.currentTimeMillis(),
     val notionSyncState: String = NOTION_IDLE, // idle, syncing, synced, failed
     val notionPageUrl: String = "",
-    val notionError: String = ""
+    val notionError: String = "",
+    val statusMessage: String = "",
+    val consecutiveFailures: Int = 0,
+    val geminiModel: String = ""
 ) {
     companion object {
         const val STATE_QUEUED = "queued"

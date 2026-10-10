@@ -3,6 +3,7 @@ package com.naylinhtike.smarttranscriber
 import android.content.Context
 import android.util.AtomicFile
 import androidx.work.Constraints
+import androidx.work.BackoffPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -16,19 +17,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 
 class TranscribeRepository(private val context: Context) {
 
     companion object {
         const val WORK_TAG = "transcribe_work"
         private val lock = Any()
+        private val sharedJobs = MutableStateFlow<List<TranscribeJob>>(emptyList())
     }
 
     private val rootDir = File(context.filesDir, "transcriptions").apply { mkdirs() }
     private val gson = Gson()
     private val workManager = WorkManager.getInstance(context)
 
-    private val _jobsFlow = MutableStateFlow<List<TranscribeJob>>(emptyList())
+    private val _jobsFlow = sharedJobs
     val jobsFlow: Flow<List<TranscribeJob>> = _jobsFlow.asStateFlow()
 
     init {
@@ -61,7 +64,7 @@ class TranscribeRepository(private val context: Context) {
     }
 
     fun getJob(id: String): TranscribeJob? = synchronized(lock) {
-        val jobFile = File(getJobDir(id), "job.json")
+        val jobFile = File(File(rootDir, id), "job.json")
         if (!jobFile.exists()) return null
         try {
             AtomicFile(jobFile).openRead().use { stream ->
@@ -133,32 +136,34 @@ class TranscribeRepository(private val context: Context) {
         return@withContext job
     }
 
-    fun enqueueWork(jobId: String) {
+    fun enqueueWork(jobId: String, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
         val request = OneTimeWorkRequestBuilder<TranscribeWorker>()
             .setConstraints(constraints)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
             .addTag(WORK_TAG)
             .addTag("job_$jobId")
             .setInputData(workDataOf("job_id" to jobId))
             .build()
 
-        workManager.enqueueUniqueWork("transcribe_$jobId", ExistingWorkPolicy.REPLACE, request)
+        workManager.enqueueUniqueWork("transcribe_$jobId", policy, request)
     }
 
     fun pauseJob(jobId: String) {
-        workManager.cancelUniqueWork("transcribe_$jobId")
         updateJob(jobId) { it.copy(state = TranscribeJob.STATE_PAUSED) }
+        workManager.cancelUniqueWork("transcribe_$jobId")
     }
 
     fun resumeJob(jobId: String) {
-        updateJob(jobId) { it.copy(state = TranscribeJob.STATE_QUEUED, error = "") }
-        enqueueWork(jobId)
+        updateJob(jobId) { it.copy(state = TranscribeJob.STATE_QUEUED, error = "", consecutiveFailures = 0, statusMessage = "ပြန်လည်ဆက်လုပ်ရန် စောင့်နေသည်...") }
+        enqueueWork(jobId, ExistingWorkPolicy.REPLACE)
     }
 
     fun deleteJob(jobId: String) {
+        updateJob(jobId) { it.copy(state = TranscribeJob.STATE_PAUSED) }
         workManager.cancelUniqueWork("transcribe_$jobId")
         val dir = getJobDir(jobId)
         dir.deleteRecursively()
@@ -174,7 +179,7 @@ class TranscribeRepository(private val context: Context) {
                 digest.update(buf, 0, n)
             }
         }
-        digest.update("$language:${file.name}".toByteArray(Charsets.UTF_8))
+        digest.update(language.toByteArray(Charsets.UTF_8))
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }

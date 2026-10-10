@@ -1,11 +1,14 @@
 package com.naylinhtike.smarttranscriber
 
-import android.util.Base64
+import okio.ByteString.Companion.toByteString
 import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -13,190 +16,121 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
+
+internal class GeminiApiException(message: String, val retryable: Boolean) : IOException(message)
 
 class GeminiTranscriber(
-    private val apiKeys: List<String>
+    apiKeys: List<String>,
+    private val endpoint: String = "https://generativelanguage.googleapis.com/v1beta",
+    initialModel: String = ""
 ) {
+    private val keys = apiKeys.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+    private var keyIndex = 0
+    private val unavailableModels = mutableSetOf<Pair<Int, String>>()
+    private var preferredModel = initialModel.takeIf { it in MODELS } ?: MODELS.first()
+    internal var lastSuccessfulModel: String = ""
+        private set
     private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(150, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
+        .callTimeout(180, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
         .build()
 
-    private val gson = Gson()
-    private val currentKeyIndex = AtomicInteger(0)
-
     companion object {
-        // High-speed, high-accuracy Google Gemini audio models ordered by performance and availability
-        private val MODELS = listOf(
-            "gemini-2.0-flash",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro"
-        )
+        // Current audio-capable Flash, with a legacy option for existing accounts.
+        private val MODELS = listOf("gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite")
     }
 
-    suspend fun transcribeChunk(audioWavFile: File, languageCode: String): String = withContext(Dispatchers.IO) {
-        val keys = apiKeys.filter { it.isNotBlank() }
-        if (keys.isEmpty()) {
-            throw IllegalStateException("Gemini API Key မရှိပါ။ ကျေးဇူးပြု၍ Settings ထဲတွင် API Key ထည့်သွင်းပါ။")
-        }
+    suspend fun transcribeChunk(audioWavFile: File, languageCode: String): String = try {
+        withTimeout(240_000L) { transcribeChunkRequest(audioWavFile, languageCode) }
+    } catch (_: TimeoutCancellationException) {
+        throw GeminiApiException("အသံအပိုင်း ပြောင်းရန် အချိန်ကျော်သွားသည်။ ပြီးထားသောအပိုင်းများမှ ဆက်ကြိုးစားမည်။", true)
+    }
 
-        val base64Audio = Base64.encodeToString(audioWavFile.readBytes(), Base64.NO_WRAP)
-        val promptText = if (languageCode.startsWith("my", ignoreCase = true)) {
-            """
-            သင်သည် မြန်မာဘာသာစကားနှင့် ဗုဒ္ဓဘာသာ တရားတော်များ (Dhamma sermons) ကို အထူးကျွမ်းကျင်သော Audio Transcriber ဖြစ်သည်။
-            ဤ အသံဖိုင် (တရားတော်/စကားပြော) ကို ကြားရသည့်အတိုင်း တိကျမှန်ကန်သော မြန်မာယူနီကုဒ် (Myanmar Unicode) စာသားအဖြစ် အပြည့်အစုံ ကူးရေးပေးပါ။
-            
-            အရေးကြီးသော ညွှန်ကြားချက်များ:
-            ၁။ ပါဠိတော်များ၊ ဗုဒ္ဓဒေသနာတော် အခေါ်အဝေါ်များ၊ ဓမ္မဝေါဟာရများကို အသံထွက်အတိုင်း အမှန်ဆုံး ရေးသားပါ။
-            ၂။ အသံဖိုင်ထဲတွင် မပါရှိသော ရှင်းလင်းချက်၊ အနှစ်ချုပ်၊ မှတ်ချက်၊ Markdown quotation အပိုများကို လုံးဝ မထည့်ပါနှင့်။
-            ၃။ အသံဖိုင်ထဲမှ စကားလုံးများကိုသာ စကားလုံးအပြည့်အစုံ စာသားထုတ်ပေးပါ။
-            """.trimIndent()
-        } else {
-            "Please transcribe the following audio accurately word-for-word. Output ONLY the raw transcribed text. Do not summarize or add commentary."
-        }
-
-        val requestBodyJson = buildRequestBody(promptText, base64Audio)
-        var lastException: Exception? = null
-
-        // Support unlimited duration audio (e.g. 1-3 hour Dhamma talks) with automatic model fallback, key rotation, and rate-limit backoff
-        val maxAttempts = 6
-        for (attempt in 1..maxAttempts) {
-            val keyCount = keys.size
-            var anyRateLimitHit = false
-
-            for (offset in 0 until keyCount) {
-                val keyIdx = (currentKeyIndex.get() + offset) % keyCount
-                val apiKey = keys[keyIdx]
-
-                for (model in MODELS) {
-                    try {
-                        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
-                        val request = Request.Builder()
-                            .url(url)
-                            .post(requestBodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                            .build()
-
-                        val response = client.newCall(request).execute()
-                        val code = response.code
-                        val responseText = response.body?.string().orEmpty()
-
+    private suspend fun transcribeChunkRequest(audioWavFile: File, languageCode: String): String = withContext(Dispatchers.IO) {
+        if (keys.isEmpty()) throw GeminiApiException("Settings တွင် Gemini API Key ထည့်ပါ။", false)
+        check(audioWavFile.length() in 45..8_000_000) { "Invalid audio chunk size" }
+        val audio = audioWavFile.readBytes().toByteString().base64()
+        var requests = 0
+        var lastError: GeminiApiException? = null
+        val models = listOf(preferredModel) + MODELS.filter { it != preferredModel }
+        for (offset in keys.indices) {
+            val index = (keyIndex + offset) % keys.size
+            for (model in models) {
+                if (index to model in unavailableModels) continue
+                // Bound total requests. A quota error must not cause an hours-long model loop.
+                if (requests++ >= 4) throw lastError ?: GeminiApiException("Gemini ကို ခဏစောင့်ပြီး ပြန်စမ်းပါ။", true)
+                val request = Request.Builder()
+                    .url("$endpoint/models/$model:generateContent")
+                    .header("x-goog-api-key", keys[index])
+                    .post(buildRequestBody(audio, languageCode, model).toRequestBody("application/json; charset=utf-8".toMediaType()))
+                    .build()
+                var rateLimited = false
+                try {
+                    client.newCall(request).awaitResponse().use { response ->
                         if (response.isSuccessful) {
-                            val parsedText = extractText(responseText)
-                            // Advance key index so load is shared fairly across multiple keys
-                            currentKeyIndex.incrementAndGet()
-                            return@withContext if (parsedText.isNotBlank()) parsedText else "[no speech]"
+                            val text = GeminiResponseParser.extract(response.body?.string().orEmpty())
+                            preferredModel = model
+                            lastSuccessfulModel = model
+                            keyIndex = (index + 1) % keys.size
+                            return@withContext text
                         }
-
-                        if (code == 429) {
-                            anyRateLimitHit = true
-                            lastException = IOException("Gemini API Rate Limit (429) - Quota ပြည့်နေပါသည်: Model $model, စောင့်ဆိုင်းပြီး ပြန်လည်ကြိုးစားနေပါသည်...")
-                            // In Google AI Studio, quotas are maintained per-model. Try next model before leaving key!
-                            continue
-                        } else if (code == 404) {
-                            // Model not available on this endpoint or account, try next fallback model
-                            lastException = IOException("Gemini model $model not found (HTTP 404).")
-                            continue
-                        } else {
-                            lastException = IOException("Gemini API Error (HTTP $code): ${responseText.take(200)}")
+                        when (response.code) {
+                            404 -> {
+                                unavailableModels += index to model
+                                lastError = GeminiApiException("Gemini model အသုံးပြုမရပါ။ API Key ကို စစ်ဆေးပါ။", false)
+                            }
+                            401, 403 -> {
+                                lastError = GeminiApiException("API Key သို့မဟုတ် model အသုံးပြုခွင့် မမှန်ပါ။ Settings တွင် စစ်ဆေးပါ။", false)
+                            }
+                            429 -> {
+                                lastError = GeminiApiException("Gemini quota ပြည့်နေသည် (429)။ ပြီးထားသောအပိုင်းများကို သိမ်းထားပြီး ခဏစောင့်ကာ ပြန်ကြိုးစားမည်။", true)
+                                rateLimited = true
+                            }
+                            408, 500, 502, 503, 504 -> lastError = GeminiApiException("Gemini server ယာယီမရပါ (HTTP ${response.code})။ ပြန်ကြိုးစားမည်။", true)
+                            else -> throw GeminiApiException("Gemini request မအောင်မြင်ပါ (HTTP ${response.code})။ API Key နှင့် model အသုံးပြုခွင့်ကို စစ်ဆေးပါ။", false)
                         }
-                    } catch (e: Exception) {
-                        lastException = e
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: GeminiApiException) {
+                    throw e
+                } catch (e: IOException) {
+                    // Never expose request URLs, response bodies, or credentials in the UI.
+                    lastError = GeminiApiException("ကွန်ရက်ပြတ်ခြင်း သို့မဟုတ် စာသားမပြည့်စုံခြင်း ဖြစ်ပါသည်။ ပြီးထားသောအပိုင်းများမှ ဆက်ကြိုးစားမည်။", true)
                 }
-            }
-
-            // If rate limits were encountered, back off progressively to allow the 60-second quota bucket to refresh
-            if (attempt < maxAttempts) {
-                val backoffMs = if (anyRateLimitHit) {
-                    when (attempt) {
-                        1 -> 8_000L
-                        2 -> 20_000L
-                        3 -> 35_000L
-                        4 -> 55_000L
-                        else -> 65_000L
-                    }
-                } else {
-                    attempt * 4_000L
-                }
-                delay(backoffMs)
+                if (rateLimited) break
             }
         }
-
-        throw lastException ?: IOException("Failed to transcribe audio chunk with available Gemini API keys.")
+        throw lastError ?: GeminiApiException("Gemini model အသုံးပြုမရပါ။", false)
     }
 
-    private fun buildRequestBody(prompt: String, base64Audio: String): String {
-        val root = JsonObject()
-        val contents = com.google.gson.JsonArray()
-        val content = JsonObject()
-        val parts = com.google.gson.JsonArray()
-
-        // Text prompt part
-        val textPart = JsonObject()
-        textPart.addProperty("text", prompt)
-        parts.add(textPart)
-
-        // Audio inline data part
-        val audioPart = JsonObject()
-        val inlineData = JsonObject()
-        inlineData.addProperty("mimeType", "audio/wav")
-        inlineData.addProperty("data", base64Audio)
-        audioPart.add("inlineData", inlineData)
-        parts.add(audioPart)
-
-        content.add("parts", parts)
-        contents.add(content)
-        root.add("contents", contents)
-
-        // Verbatim transcription generation configuration
-        val genConfig = JsonObject()
-        genConfig.addProperty("temperature", 0.2)
-        genConfig.addProperty("maxOutputTokens", 8192)
-        root.add("generationConfig", genConfig)
-
-        // Safety settings: religious Dhamma talks often discuss suffering (dukkha), death, sickness, or karma.
-        // Disable aggressive filters so sermons are never falsely blocked.
-        val safetySettings = com.google.gson.JsonArray()
-        val categories = listOf(
-            "HARM_CATEGORY_HARASSMENT",
-            "HARM_CATEGORY_HATE_SPEECH",
-            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            "HARM_CATEGORY_DANGEROUS_CONTENT"
-        )
-        for (cat in categories) {
-            val rule = JsonObject()
-            rule.addProperty("category", cat)
-            rule.addProperty("threshold", "BLOCK_NONE")
-            safetySettings.add(rule)
+    private fun buildRequestBody(base64Audio: String, languageCode: String, model: String): String {
+        val prompt = if (languageCode.startsWith("my", true)) {
+            "သင်သည် မြန်မာဘာသာနှင့် ဗုဒ္ဓဘာသာတရားတော်များကို ကူးရေးသူဖြစ်သည်။ အသံထဲက စကားအားလုံးကို ကြားရသည့်အတိုင်း မြန်မာယူနီကုဒ်ဖြင့် အပြည့်အစုံရေးပါ။ ပါဠိ၊ ဓမ္မဝေါဟာရများကို အသံထွက်အတိုင်းရေးပါ။ အနှစ်ချုပ်၊ ရှင်းလင်းချက်၊ စိတ်ကူးဖြည့်စွက်ချက်၊ Markdown မထည့်ပါနှင့်။ စကားမကြားရလျှင် [no speech] ဟုသာရေးပါ။ မရှင်းသည့်နေရာတွင် [မရှင်းလင်း] ဟုရေးပြီး နောက်စကားကို ဆက်ရေးပါ။"
+        } else {
+            "Transcribe ALL speech verbatim in language $languageCode. Output only the transcript, without summary or commentary. Mark unclear speech briefly and continue. If there is no speech, output exactly [no speech]."
         }
-        root.add("safetySettings", safetySettings)
-
-        return gson.toJson(root)
-    }
-
-    private fun extractText(jsonString: String): String {
-        return try {
-            val json = gson.fromJson(jsonString, JsonObject::class.java)
-            val candidates = json.getAsJsonArray("candidates") ?: return ""
-            if (candidates.size() == 0) return ""
-            val first = candidates.get(0).asJsonObject
-            val content = first.getAsJsonObject("content") ?: return ""
-            val parts = content.getAsJsonArray("parts") ?: return ""
-            val textBuilder = StringBuilder()
-            for (i in 0 until parts.size()) {
-                val part = parts.get(i).asJsonObject
-                if (part.has("text")) {
-                    textBuilder.append(part.get("text").asString)
-                }
-            }
-            textBuilder.toString().trim()
-        } catch (_: Exception) {
-            ""
+        val parts = JsonArray().apply {
+            add(JsonObject().apply { addProperty("text", prompt) })
+            add(JsonObject().apply {
+                add("inlineData", JsonObject().apply {
+                    addProperty("mimeType", "audio/wav")
+                    addProperty("data", base64Audio)
+                })
+            })
         }
+        val root = JsonObject().apply {
+            add("contents", JsonArray().apply { add(JsonObject().apply { add("parts", parts) }) })
+            add("generationConfig", JsonObject().apply {
+                addProperty("temperature", 0.2)
+                addProperty("maxOutputTokens", 16384)
+                if (model == "gemini-3.8-flash") add("thinkingConfig", JsonObject().apply { addProperty("thinkingLevel", "low") })
+                if (model == "gemini-2.5-flash") add("thinkingConfig", JsonObject().apply { addProperty("thinkingBudget", 0) })
+            })
+        }
+        return Gson().toJson(root)
     }
 }

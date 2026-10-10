@@ -2,13 +2,17 @@ package com.naylinhtike.smarttranscriber
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,13 +28,10 @@ data class AppReleaseInfo(
     val title: String,
     val releaseNotes: String,
     val downloadUrl: String,
-    val fileSize: Long = 0L
+    val fileSize: Long = 0L,
+    val sha256: String? = null
 ) {
-    fun formattedSize(): String {
-        if (fileSize <= 0) return ""
-        val mb = fileSize / (1024.0 * 1024.0)
-        return String.format("%.1f MB", mb)
-    }
+    fun formattedSize(): String = if (fileSize <= 0) "" else "%.1f MB".format(fileSize / (1024.0 * 1024.0))
 }
 
 sealed class UpdateUiState {
@@ -44,14 +45,13 @@ sealed class UpdateUiState {
 }
 
 class UpdateManager(private val context: Context) {
-
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(15, TimeUnit.MINUTES)
         .build()
-
     private val gson = Gson()
-
+    private val installPreferences = context.getSharedPreferences("app_updates", Context.MODE_PRIVATE)
     private val _updateState = MutableStateFlow<UpdateUiState>(UpdateUiState.Idle)
     val updateState: StateFlow<UpdateUiState> = _updateState.asStateFlow()
 
@@ -61,180 +61,169 @@ class UpdateManager(private val context: Context) {
     }
 
     fun resetState() {
-        _updateState.value = UpdateUiState.Idle
+        if (_updateState.value !is UpdateUiState.Downloading) _updateState.value = UpdateUiState.Idle
     }
 
     suspend fun checkUpdate(currentVersion: String, customUrl: String? = null) {
+        if (_updateState.value is UpdateUiState.Downloading ||
+            _updateState.value is UpdateUiState.Checking ||
+            _updateState.value is UpdateUiState.ReadyToInstall) return
         _updateState.value = UpdateUiState.Checking
-
         withContext(Dispatchers.IO) {
             try {
-                val url = if (!customUrl.isNullOrBlank()) customUrl.trim() else DEFAULT_RELEASE_API
-                val request = Request.Builder()
-                    .url(url)
-                    .header("Accept", "application/vnd.github.v3+json")
-                    .header("User-Agent", "SmartTranscriber-App")
-                    .build()
-
+                val url = customUrl?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_RELEASE_API
+                require(Uri.parse(url).scheme == "https") { "Update URL must use HTTPS" }
+                val request = Request.Builder().url(url)
+                    .header("Accept", "application/vnd.github+json")
+                    .header("User-Agent", "SmartTranscriber-App").build()
                 httpClient.newCall(request).execute().use { response ->
-                    if (response.code == 404) {
-                        // GitHub has no releases yet, meaning current is the latest version
+                    if (!response.isSuccessful) error("Update စစ်ဆေးမှု မအောင်မြင်ပါ (HTTP ${response.code})")
+                    if (_updateState.value !is UpdateUiState.Checking) return@withContext
+                    val json = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
+                    val version = (json.get("tag_name")?.asString ?: json.get("version")?.asString.orEmpty())
+                        .trim().trimStart('v', 'V')
+                    if (!UpdateValidation.isNewerVersion(currentVersion, version)) {
                         _updateState.value = UpdateUiState.AlreadyUpToDate
                         return@withContext
                     }
-                    if (!response.isSuccessful) {
-                        _updateState.value = UpdateUiState.Error("စစ်ဆေးမှု မအောင်မြင်ပါ (HTTP ${response.code})")
-                        return@withContext
-                    }
-
-                    val body = response.body?.string().orEmpty()
-                    val json = gson.fromJson(body, JsonObject::class.java)
-
-                    // Parse GitHub release JSON or Generic release JSON
-                    val tagName = json.get("tag_name")?.asString
-                        ?: json.get("version")?.asString
-                        ?: ""
-                    val remoteVersion = tagName.trimStart('v', 'V').trim()
-
-                    val title = json.get("name")?.asString ?: "ဗားရှင်းအသစ် $tagName"
-                    val notes = json.get("body")?.asString
-                        ?: json.get("releaseNotes")?.asString
-                        ?: "လုပ်ဆောင်ချက်အသစ်များနှင့် တိုးတက်မှုများ ပါဝင်ပါသည်"
-
                     var downloadUrl = json.get("downloadUrl")?.asString.orEmpty()
-                    var fileSize = 0L
-
-                    if (downloadUrl.isBlank() && json.has("assets")) {
-                        val assets = json.getAsJsonArray("assets")
-                        for (element in assets) {
-                            val assetObj = element.asJsonObject
-                            val name = assetObj.get("name")?.asString.orEmpty()
-                            if (name.endsWith(".apk", ignoreCase = true)) {
-                                downloadUrl = assetObj.get("browser_download_url")?.asString.orEmpty()
-                                fileSize = assetObj.get("size")?.asLong ?: 0L
-                                break
-                            }
-                        }
+                    var size = json.get("fileSize")?.asLong ?: 0L
+                    var digest = json.get("sha256")?.takeUnless { it.isJsonNull }?.asString
+                    if (downloadUrl.isBlank()) {
+                        val assets = json.getAsJsonArray("assets")?.map { it.asJsonObject }.orEmpty()
+                        val apk = assets.firstOrNull {
+                            it.get("name")?.asString?.startsWith("SmartTranscriber-") == true &&
+                                it.get("name")?.asString?.endsWith(".apk", true) == true
+                        } ?: assets.firstOrNull { it.get("name")?.asString?.endsWith(".apk", true) == true }
+                        downloadUrl = apk?.get("browser_download_url")?.asString.orEmpty()
+                        size = apk?.get("size")?.asLong ?: 0L
+                        digest = apk?.get("digest")?.takeUnless { it.isJsonNull }?.asString?.removePrefix("sha256:")
                     }
-
-                    if (remoteVersion.isNotBlank() && isNewerVersion(currentVersion, remoteVersion)) {
-                        val release = AppReleaseInfo(
-                            version = remoteVersion,
-                            title = title,
-                            releaseNotes = notes,
-                            downloadUrl = downloadUrl,
-                            fileSize = fileSize
-                        )
-                        _updateState.value = UpdateUiState.UpdateAvailable(release)
-                    } else {
-                        _updateState.value = UpdateUiState.AlreadyUpToDate
-                    }
+                    require(Uri.parse(downloadUrl).scheme == "https") { "APK ဒေါင်းလုဒ်လင့်ခ် မရှိသေးပါ။" }
+                    _updateState.value = UpdateUiState.UpdateAvailable(AppReleaseInfo(
+                        version, json.get("name")?.asString ?: "ဗားရှင်းအသစ် $version",
+                        json.get("body")?.asString ?: json.get("releaseNotes")?.asString.orEmpty(),
+                        downloadUrl, size, digest
+                    ))
                 }
             } catch (e: Exception) {
-                _updateState.value = UpdateUiState.Error("ကွန်ရက်ချိတ်ဆက်မှု မအောင်မြင်ပါ: ${e.message ?: "Unknown error"}")
+                if (e is CancellationException) throw e
+                if (_updateState.value is UpdateUiState.Checking) _updateState.value = UpdateUiState.Error(e.message.orEmpty())
             }
         }
     }
 
     suspend fun downloadAndInstall(release: AppReleaseInfo) {
-        if (release.downloadUrl.isBlank()) {
-            _updateState.value = UpdateUiState.Error("ဒေါင်းလုဒ်လင့်ခ် မရှိသေးပါ")
-            return
-        }
-
+        if (_updateState.value is UpdateUiState.Downloading) return
+        _updateState.value = UpdateUiState.Downloading(0f, 0, release.fileSize)
         withContext(Dispatchers.IO) {
+            val directory = File(context.cacheDir, "updates").apply { mkdirs() }
+            val temporary = File(directory, "update.part.apk")
             try {
-                val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
-                val apkFile = File(updatesDir, "SmartTranscriber_v${release.version}.apk")
-
-                val request = Request.Builder()
-                    .url(release.downloadUrl)
-                    .header("User-Agent", "SmartTranscriber-App")
-                    .build()
-
+                require(Uri.parse(release.downloadUrl).scheme == "https") { "APK download must use HTTPS" }
+                val request = Request.Builder().url(release.downloadUrl)
+                    .header("User-Agent", "SmartTranscriber-App").build()
                 httpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        _updateState.value = UpdateUiState.Error("ဒေါင်းလုဒ် မအောင်မြင်ပါ (HTTP ${response.code})")
-                        return@withContext
-                    }
-
-                    val body = response.body ?: throw IllegalStateException("Empty response body")
-                    val totalBytes = if (release.fileSize > 0) release.fileSize else body.contentLength()
-                    var downloadedBytes = 0L
-
+                    check(response.isSuccessful) { "ဒေါင်းလုဒ် မအောင်မြင်ပါ (HTTP ${response.code})" }
+                    val body = response.body ?: error("Empty APK response")
+                    val total = if (release.fileSize > 0) release.fileSize else body.contentLength()
+                    var downloaded = 0L
+                    var lastReport = 0L
                     body.byteStream().use { input ->
-                        FileOutputStream(apkFile).use { output ->
-                            val buffer = ByteArray(16 * 1024)
-                            var read: Int
-                            var lastProgressReport = 0L
-
-                            while (input.read(buffer).also { read = it } != -1) {
-                                output.write(buffer, 0, read)
-                                downloadedBytes += read
-
+                        FileOutputStream(temporary).use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var count: Int
+                            while (input.read(buffer).also { count = it } != -1) {
+                                currentCoroutineContext().ensureActive()
+                                output.write(buffer, 0, count)
+                                downloaded += count
                                 val now = System.currentTimeMillis()
-                                if (now - lastProgressReport > 200 || downloadedBytes == totalBytes) {
-                                    val percent = if (totalBytes > 0) (downloadedBytes.toFloat() / totalBytes.toFloat()) else 0f
-                                    _updateState.value = UpdateUiState.Downloading(percent, downloadedBytes, totalBytes)
-                                    lastProgressReport = now
+                                if (now - lastReport >= 200) {
+                                    val percent = if (total > 0) (downloaded.toFloat() / total).coerceIn(0f, 1f) else 0f
+                                    _updateState.value = UpdateUiState.Downloading(percent, downloaded, total)
+                                    lastReport = now
                                 }
                             }
                             output.flush()
+                            output.fd.sync()
                         }
                     }
-
+                    check(total <= 0 || downloaded == total) { "APK ဒေါင်းလုဒ် မပြည့်စုံပါ။ ပြန်စမ်းပါ။" }
+                    release.sha256?.takeIf { it.isNotBlank() }?.let { expected ->
+                        check(UpdateValidation.sha256(temporary).equals(expected.removePrefix("sha256:"), true)) {
+                            "APK checksum မကိုက်ညီပါ။"
+                        }
+                    }
+                    validatePackage(temporary)
+                    val apkFile = File(directory, "update.apk")
+                    apkFile.delete()
+                    check(temporary.renameTo(apkFile)) { "APK ဖိုင်ကို သိမ်းမရပါ။" }
                     _updateState.value = UpdateUiState.ReadyToInstall(apkFile)
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _updateState.value = UpdateUiState.Error("ဒေါင်းလုဒ် အမှား: ${e.message}")
+            } finally {
+                temporary.delete()
             }
         }
     }
 
     fun promptInstall(apkFile: File) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (!context.packageManager.canRequestPackageInstalls()) {
-                    val manageIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                        data = Uri.parse("package:${context.packageName}")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(manageIntent)
-                    return
-                }
+            if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
+                installPreferences.edit().putBoolean("awaiting_permission", true).apply()
+                context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+                return
             }
-
-            val apkUri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                apkFile
-            )
-
-            val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(apkUri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(installIntent)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+            installPreferences.edit().putBoolean("awaiting_permission", false).apply()
         } catch (e: Exception) {
-            _updateState.value = UpdateUiState.Error("Install လုပ်ရာတွင် အမှားဖြစ်ပါသည်: ${e.message}")
+            _updateState.value = UpdateUiState.Error("Install အမှား: ${e.message}")
         }
     }
 
-    private fun isNewerVersion(current: String, remote: String): Boolean {
-        val cleanCurrent = current.trimStart('v', 'V').trim()
-        val cleanRemote = remote.trimStart('v', 'V').trim()
-
-        val currentParts = cleanCurrent.split(".").mapNotNull { it.toIntOrNull() }
-        val remoteParts = cleanRemote.split(".").mapNotNull { it.toIntOrNull() }
-
-        val maxLen = maxOf(currentParts.size, remoteParts.size)
-        for (i in 0 until maxLen) {
-            val c = currentParts.getOrElse(i) { 0 }
-            val r = remoteParts.getOrElse(i) { 0 }
-            if (r > c) return true
-            if (r < c) return false
+    @Suppress("DEPRECATION")
+    private fun validatePackage(file: File) {
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, flags)
+            ?: error("ဒေါင်းလုဒ်ဖိုင်သည် APK အမှန် မဟုတ်ပါ။")
+        val installed = context.packageManager.getPackageInfo(context.packageName, flags)
+        check(archive.packageName == context.packageName) { "APK သည် အခြား App အတွက် ဖြစ်နေပါသည်။" }
+        val remoteCode = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
+        val currentCode = if (Build.VERSION.SDK_INT >= 28) installed.longVersionCode else installed.versionCode.toLong()
+        check(remoteCode > currentCode) { "APK ဗားရှင်းသည် လက်ရှိထက် မမြင့်ပါ။" }
+        fun certificates(info: android.content.pm.PackageInfo): Set<String> {
+            val signatures = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures
+            return signatures.orEmpty().map { it.toCharsString() }.toSet()
         }
-        return false
+        val expected = certificates(installed)
+        check(expected.isNotEmpty() && certificates(archive) == expected) { "APK လက်မှတ်သည် လက်ရှိ App နှင့် မကိုက်ညီပါ။" }
+    }
+
+    suspend fun resumePendingInstall() {
+        if (!installPreferences.getBoolean("awaiting_permission", false)) return
+        val file = (_updateState.value as? UpdateUiState.ReadyToInstall)?.apkFile
+            ?: File(context.cacheDir, "updates/update.apk")
+        if (!file.exists()) {
+            installPreferences.edit().putBoolean("awaiting_permission", false).apply()
+            return
+        }
+        try {
+            withContext(Dispatchers.IO) { validatePackage(file) }
+            _updateState.value = UpdateUiState.ReadyToInstall(file)
+            if (Build.VERSION.SDK_INT < 26 || context.packageManager.canRequestPackageInstalls()) promptInstall(file)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            installPreferences.edit().putBoolean("awaiting_permission", false).apply()
+            _updateState.value = UpdateUiState.Error(e.message.orEmpty())
+        }
     }
 }

@@ -46,6 +46,11 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: TranscribeViewModel by viewModels()
 
+    override fun onResume() {
+        super.onResume()
+        viewModel.resumePendingInstall()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -581,7 +586,7 @@ fun TranscribeJobCard(
             }
 
             // Progress Bar & Stats
-            if (job.state in setOf(TranscribeJob.STATE_PROCESSING, TranscribeJob.STATE_PREPARING, TranscribeJob.STATE_PAUSED)) {
+            if (job.isActive || job.state == TranscribeJob.STATE_PAUSED) {
                 Spacer(modifier = Modifier.height(10.dp))
                 LinearProgressIndicator(
                     progress = { job.progressPercent },
@@ -614,6 +619,10 @@ fun TranscribeJobCard(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
+                }
+                if (job.statusMessage.isNotBlank()) {
+                    Text(job.statusMessage, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 

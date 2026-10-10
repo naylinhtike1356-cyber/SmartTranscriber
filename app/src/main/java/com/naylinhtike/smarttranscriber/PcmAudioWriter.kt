@@ -8,7 +8,7 @@ import java.nio.ByteOrder
 data class AudioChunkSpan(val index: Int, val startSample: Long, val endSample: Long)
 
 /**
- * Continuous 16 kHz mono PCM writer that chunks audio into ~3-minute WAV segments
+ * Continuous 16 kHz mono PCM writer that chunks audio into at most 2-minute WAV segments
  * without dropping or duplicating boundary samples.
  */
 class PcmAudioWriter(
@@ -18,7 +18,7 @@ class PcmAudioWriter(
 
     companion object {
         const val SAMPLE_RATE = 16_000
-        const val CHUNK_MAX_SECONDS = 120 // 2 minutes per chunk (optimal for Gemini speed & zero hallucination)
+        const val CHUNK_MAX_SECONDS = 120 // Keep boundaries compatible with saved v1.1 checkpoints.
         const val CHUNK_MIN_SECONDS = 90  // Split on silence after 1.5 minutes for natural sentence boundaries
     }
 
