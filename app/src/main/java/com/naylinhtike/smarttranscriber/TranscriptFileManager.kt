@@ -49,7 +49,8 @@ object TranscriptFileManager {
      */
     fun writeToSelectedUri(context: Context, uri: Uri, transcriptText: String): Boolean {
         return try {
-            context.contentResolver.openOutputStream(uri)?.use { output ->
+            val stream = context.contentResolver.openOutputStream(uri, "wt") ?: return false
+            stream.use { output ->
                 output.write(transcriptText.toByteArray(Charsets.UTF_8))
                 output.flush()
             }

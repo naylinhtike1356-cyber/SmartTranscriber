@@ -18,6 +18,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -125,11 +129,11 @@ class MainActivity : ComponentActivity() {
                                 TranscriptFileManager.openInExternalReader(
                                     context = context,
                                     fileName = job.fileName,
-                                    transcriptText = job.transcript
+                                    transcriptText = TranscriptFormatter.document(job)
                                 )
                             },
                             onSaveTextFile = { job ->
-                                textToExport = job.transcript
+                                textToExport = TranscriptFormatter.document(job)
                                 val defaultName = job.fileName.substringBeforeLast('.').ifBlank { "transcript" } + ".txt"
                                 exportTextLauncher.launch(defaultName)
                             }
@@ -146,11 +150,11 @@ class MainActivity : ComponentActivity() {
                                     TranscriptFileManager.openInExternalReader(
                                         context = context,
                                         fileName = selectedJob!!.fileName,
-                                        transcriptText = selectedJob!!.transcript
+                                        transcriptText = TranscriptFormatter.document(selectedJob!!)
                                     )
                                 },
                                 onSaveTextFile = {
-                                    textToExport = selectedJob!!.transcript
+                                    textToExport = TranscriptFormatter.document(selectedJob!!)
                                     val defaultName = selectedJob!!.fileName.substringBeforeLast('.').ifBlank { "transcript" } + ".txt"
                                     exportTextLauncher.launch(defaultName)
                                 }
@@ -804,7 +808,7 @@ fun TranscriptReaderSheet(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "စာလုံးရေ ${job.transcript.length} • စကားလုံး ${job.transcript.split(Regex("\\s+")).filter { it.isNotBlank() }.size} လုံး",
+                        text = "အသံကြာချိန် ${job.formattedDuration()} • စာလုံးရေ ${job.transcript.length}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -872,22 +876,55 @@ fun TranscriptReaderSheet(
 
             HorizontalDivider()
 
-            // Scrollable Text View with selectable text
-            Box(
+            val paragraphs = remember(job.transcript) {
+                job.transcript.ifBlank { "[စာသား မရှိသေးပါ]" }.split(Regex("\n\\s*\n"))
+            }
+            val readerState = rememberLazyListState()
+            val readerScope = rememberCoroutineScope()
+            val timePattern = remember { Regex("\\[\\d{2,}:\\d{2}:\\d{2}]") }
+            val sections = remember(paragraphs) {
+                paragraphs.withIndex().filter { timePattern.matches(it.value.trim()) }
+            }
+            if (sections.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    sections.forEach { section ->
+                        AssistChip(
+                            onClick = { readerScope.launch { readerState.animateScrollToItem(section.index) } },
+                            label = { Text(section.value.trim().removeSurrounding("[", "]")) },
+                            leadingIcon = { Icon(Icons.Default.Schedule, null, Modifier.size(16.dp)) }
+                        )
+                    }
+                }
+            }
+            if (job.state != TranscribeJob.STATE_COMPLETED) {
+                Text("မပြီးသေးသော စာမူ", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+            // Render paragraphs independently so long sermons remain responsive.
+            LazyColumn(
+                state = readerState,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(vertical = 10.dp)
-                    .verticalScroll(rememberScrollState())
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(12.dp)),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                SelectionContainer {
-                    Text(
-                        text = job.transcript.ifBlank { "[စာသား မရှိသေးပါ]" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontSize = fontSizeSp.sp,
-                        lineHeight = (fontSizeSp + 8).sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                itemsIndexed(paragraphs) { _, paragraph ->
+                    val isTime = timePattern.matches(paragraph.trim())
+                    SelectionContainer {
+                        Text(
+                            text = paragraph,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontSize = if (isTime) 14.sp else fontSizeSp.sp,
+                            lineHeight = (fontSizeSp * 1.85f).sp,
+                            fontWeight = if (isTime) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isTime) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
 
@@ -932,7 +969,7 @@ fun TranscriptReaderSheet(
                 OutlinedButton(
                     onClick = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("Transcript", job.transcript))
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Transcript", TranscriptFormatter.document(job)))
                         Toast.makeText(context, "စာသား ကူးယူပြီးပါပြီ (Copied)", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f),
@@ -948,7 +985,7 @@ fun TranscriptReaderSheet(
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_SUBJECT, job.fileName)
-                            putExtra(Intent.EXTRA_TEXT, job.transcript)
+                            putExtra(Intent.EXTRA_TEXT, TranscriptFormatter.document(job))
                         }
                         context.startActivity(Intent.createChooser(intent, "စာသား မျှဝေရန်"))
                     },
@@ -1051,18 +1088,15 @@ fun SettingsDialog(
                 ) {
                     // Section 1: Gemini AI
                     SettingsSection(title = "၁။ Gemini AI Key (တရားတော်များ သီးသန့်)") {
-                        OutlinedTextField(
+                        SecretKeyField(
                             value = keysInput,
                             onValueChange = { keysInput = it },
-                            label = { Text("Gemini API Keys") },
-                            placeholder = { Text("AI Studio Key ၁ ခု (သို့) ၂ ခု ကော်မာ (,) ခြားထည့်ပါ") },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 2,
-                            maxLines = 3
+                            label = "Gemini API Keys",
+                            multiple = true
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "💡 အကြံပြုချက်: အချိန် ၂-၃ နာရီကြာ တရားတော်များကို အကန့်အသတ် (Limit) မရှိ လျင်မြန်စွာ ပြောင်းနိုင်ရန် Google AI Studio မှ အခမဲ့ API Key တစ်ခုထက်မက ကော်မာ (,) ခြား၍ ထည့်နိုင်ပါသည်",
+                            text = "Key တစ်ခုထက်ပိုလျှင် ကော်မာ (,) သို့မဟုတ် စာကြောင်းခြား၍ ထည့်ပါ။ Quota သည် Google account နှင့် model အလိုက် သတ်မှတ်ထားပါသည်။",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 11.5.sp,
@@ -1110,12 +1144,10 @@ fun SettingsDialog(
                                     )
                                 }
 
-                                OutlinedTextField(
+                                SecretKeyField(
                                     value = notionKeyInput,
                                     onValueChange = { notionKeyInput = it },
-                                    label = { Text("Notion API Key") },
-                                    placeholder = { Text("secret_...") },
-                                    modifier = Modifier.fillMaxWidth()
+                                    label = "Notion API Key"
                                 )
 
                                 OutlinedTextField(

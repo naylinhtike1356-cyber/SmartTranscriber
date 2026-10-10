@@ -22,6 +22,7 @@ class AudioDecoder {
     suspend fun decodeToWavChunks(
         source: File,
         targetDirectory: File,
+        exactTenMinuteBoundaries: Boolean = true,
         onProgress: suspend (Long, Long) -> Unit = { _, _ -> }
     ): List<AudioChunkSpan> {
         check(targetDirectory.exists() || targetDirectory.mkdirs()) { "Cannot create output directory" }
@@ -34,7 +35,7 @@ class AudioDecoder {
         val sonic = SonicAudioProcessor()
         var resampling = false
 
-        val writer = PcmAudioWriter(targetDirectory) {
+        val writer = PcmAudioWriter(targetDirectory, exactTenMinuteBoundaries) {
             val available = android.os.StatFs(targetDirectory.absolutePath).availableBytes
             check(available > 10L * 1024 * 1024) { "Not enough storage to decode audio. Please free storage space." }
         }

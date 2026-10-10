@@ -77,13 +77,19 @@ class TranscribeWorker(
             val needsDecoding = storedCount <= 0 || (0 until storedCount).any {
                 checkpoints.read(it).isBlank() && !isValidWavChunk(File(chunksDir, "$it.wav"))
             }
+            // Keep old checkpoint indices paired with their original silence-based audio layout.
+            val layoutFile = File(chunksDir, "layout.txt")
+            if (storedCount <= 0) writeAtomicText(layoutFile, "ten-minute-v1")
+            val exactBoundaries = runCatching {
+                android.util.AtomicFile(layoutFile).openRead().bufferedReader().use { it.readText() } == "ten-minute-v1"
+            }.getOrDefault(false)
             if (needsDecoding) {
                 repository.updateJob(jobId) { if (!it.isActive) it else it.copy(state = TranscribeJob.STATE_PREPARING, error = "") }
                 setForeground(createNotification(job, "အသံဖိုင် ခွဲခြမ်းနေပါသည်..."))
 
                 // Preserve completed text even if preparation was interrupted or a WAV went missing.
                 chunksDir.listFiles()?.filter { it.extension == "wav" }?.forEach { it.delete() }
-                val spans = AudioDecoder().decodeToWavChunks(sourceFile, chunksDir) { position, duration ->
+                val spans = AudioDecoder().decodeToWavChunks(sourceFile, chunksDir, exactBoundaries) { position, duration ->
                     currentCoroutineContext().ensureActive()
                     val percent = if (duration > 0) (position * 100 / duration).coerceIn(0, 100) else 0
                     val status = "အသံဖိုင် ခွဲခြမ်းနေသည် ($percent%)..."
@@ -98,13 +104,25 @@ class TranscribeWorker(
 
             val totalChunks = android.util.AtomicFile(countManifest).openRead().bufferedReader().use { it.readText().trim().toInt() }
             check(totalChunks in 1..10_000) { "Invalid chunk count" }
+            val spans = runCatching {
+                val json = android.util.AtomicFile(File(chunksDir, "spans.json"))
+                    .openRead().bufferedReader().use { it.readText() }
+                Gson().fromJson(json, Array<AudioChunkSpan>::class.java).toList().also { saved ->
+                    check(saved.size == totalChunks && saved.withIndex().all { (index, span) ->
+                        span.index == index && span.startSample >= 0 && span.endSample > span.startSample &&
+                            (index == 0 && span.startSample == 0L || index > 0 && saved[index - 1].endSample == span.startSample)
+                    })
+                }
+            }.getOrDefault(emptyList())
+            fun assembledTranscript(): String = if (spans.isEmpty()) checkpoints.transcript(totalChunks)
+                else TranscriptFormatter.assemble(spans, checkpoints::read)
 
             repository.updateJob(jobId) {
                 it.copy(
                     state = if (it.isActive) TranscribeJob.STATE_PROCESSING else it.state,
                     totalChunks = totalChunks,
                     completedChunks = checkpoints.completed(totalChunks),
-                    transcript = checkpoints.transcript(totalChunks)
+                    transcript = assembledTranscript()
                 )
             }
 
@@ -153,7 +171,7 @@ class TranscribeWorker(
                         state = TranscribeJob.STATE_PROCESSING,
                         completedChunks = completed,
                         totalChunks = totalChunks,
-                        transcript = checkpoints.transcript(totalChunks),
+                        transcript = assembledTranscript(),
                         consecutiveFailures = 0,
                         geminiModel = transcriber.lastSuccessfulModel
                     )
@@ -167,18 +185,7 @@ class TranscribeWorker(
             }
 
             // Phase 3: Combine all chunks
-            val fullTranscriptBuilder = StringBuilder()
-            for (index in 0 until totalChunks) {
-                val chunkText = File(chunksDir, "$index.txt").readText().trim()
-                if (chunkText != "[no speech]" && chunkText.isNotBlank()) {
-                    if (fullTranscriptBuilder.isNotEmpty()) {
-                        fullTranscriptBuilder.append("\n\n")
-                    }
-                    fullTranscriptBuilder.append(chunkText)
-                }
-            }
-
-            val finalTranscript = fullTranscriptBuilder.toString().ifBlank { "[အသံ မကြားရပါ / No speech detected]" }
+            val finalTranscript = assembledTranscript().ifBlank { "[အသံ မကြားရပါ / No speech detected]" }
             currentCoroutineContext().ensureActive()
             writeAtomicText(File(jobDir, "transcript.txt"), finalTranscript)
 

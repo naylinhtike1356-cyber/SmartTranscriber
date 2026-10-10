@@ -13,6 +13,7 @@ data class AudioChunkSpan(val index: Int, val startSample: Long, val endSample: 
  */
 class PcmAudioWriter(
     private val directory: File,
+    private val exactTenMinuteBoundaries: Boolean = true,
     private val checkStorage: () -> Unit = {}
 ) : AutoCloseable {
 
@@ -59,7 +60,8 @@ class PcmAudioWriter(
             silenceSamples = if (kotlin.math.abs(sample) < 200) silenceSamples + 1 else 0
 
             val currentChunkSamples = totalSamples - chunkStart
-            if (currentChunkSamples >= SAMPLE_RATE.toLong() * CHUNK_MAX_SECONDS ||
+            if ((exactTenMinuteBoundaries && totalSamples % (SAMPLE_RATE * TranscriptFormatter.SECTION_SECONDS) == 0L) ||
+                currentChunkSamples >= SAMPLE_RATE.toLong() * CHUNK_MAX_SECONDS ||
                 (currentChunkSamples >= SAMPLE_RATE.toLong() * CHUNK_MIN_SECONDS && silenceSamples >= SAMPLE_RATE / 2)
             ) {
                 finishChunk()

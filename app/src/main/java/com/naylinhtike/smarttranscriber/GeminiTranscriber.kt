@@ -109,9 +109,21 @@ class GeminiTranscriber(
 
     private fun buildRequestBody(base64Audio: String, languageCode: String, model: String): String {
         val prompt = if (languageCode.startsWith("my", true)) {
-            "သင်သည် မြန်မာဘာသာနှင့် ဗုဒ္ဓဘာသာတရားတော်များကို ကူးရေးသူဖြစ်သည်။ အသံထဲက စကားအားလုံးကို ကြားရသည့်အတိုင်း မြန်မာယူနီကုဒ်ဖြင့် အပြည့်အစုံရေးပါ။ ပါဠိ၊ ဓမ္မဝေါဟာရများကို အသံထွက်အတိုင်းရေးပါ။ အနှစ်ချုပ်၊ ရှင်းလင်းချက်၊ စိတ်ကူးဖြည့်စွက်ချက်၊ Markdown မထည့်ပါနှင့်။ စကားမကြားရလျှင် [no speech] ဟုသာရေးပါ။ မရှင်းသည့်နေရာတွင် [မရှင်းလင်း] ဟုရေးပြီး နောက်စကားကို ဆက်ရေးပါ။"
+            """
+                သင်သည် မြန်မာတရားတော်၊ ပါဠိနှင့် ဗုဒ္ဓဘာသာဝေါဟာရ ကျွမ်းကျင်သော စာကူးသူဖြစ်သည်။
+                အသံကို သေချာနားထောင်ပြီး ပြောသမျှကို အစဉ်အတိုင်း မြန်မာယူနီကုဒ်ဖြင့် အပြည့်အစုံ ကူးရေးပါ။
+                ပါဠိ၊ ဂါထာ၊ သုတ္တန်အမည်၊ ပုဂ္ဂိုလ်အမည်နှင့် ဓမ္မဝေါဟာရများကို အသံနှင့် ကိုက်ညီသည့် စံစာလုံးပေါင်းဖြင့် ရေးပါ။
+                ရင်းနှီးသော ဂါထာဖြစ်သော်လည်း အသံတွင် မရွတ်ထားသည့် စာပိုဒ်များကို မှတ်ဉာဏ်ဖြင့် မဖြည့်ပါနှင့်။ ပါဠိကို မြန်မာလို မဘာသာပြန်ပါနှင့်။
+                အဓိပ္ပာယ်၊ စကားအစဉ်၊ ဥပမာနှင့် အလေးပေးပြောဆိုမှုကို မပြောင်းပါနှင့်။ စကား မချန်ပါနှင့်၊ အနှစ်ချုပ် မလုပ်ပါနှင့်။
+                စာအုပ်ကဲ့သို့ ဖတ်ရလွယ်အောင် သဘာဝကျသည့် ဝါကျအဆုံးတွင် ၊ နှင့် ။ ထည့်ပြီး အကြောင်းအရာပြောင်းလျှင် အပိုဒ်ခွဲပါ။
+                ကဗျာနှင့် ဂါထာများကို သီးခြားအပိုဒ်ထားပြီး ရွတ်ဆိုသည့် စာကြောင်းအလိုက် တစ်ကြောင်းစီ ခွဲပါ။ စကားပြေနှင့် ရောမရေးပါနှင့်။
+                မသေချာသည့် ပါဠိ၊ အမည်နှင့် စကားလုံးကို မှန်းမရေးဘဲ [မရှင်းလင်း] ဟု အဲဒီနေရာတွင် မှတ်သားပြီး ဆက်ရေးပါ။
+                စာသားပြန်မပို့မီ အသံနှင့် စာလုံးပေါင်း၊ ပါဠိစာလုံးဆင့်၊ အဖြတ်အတောက်နှင့် ကျန်ခဲ့သည့် စကား ရှိမရှိ ပြန်စစ်ပါ။
+                Transcript သာ ပေးပါ။ ကိုယ်ပိုင်ခေါင်းစဉ်၊ ရှင်းလင်းချက်၊ Markdown နှင့် timestamp မထည့်ပါနှင့်။
+                စကားသံ မရှိလျှင် [no speech] ဟုသာ ရေးပါ။
+            """.trimIndent()
         } else {
-            "Transcribe ALL speech verbatim in language $languageCode. Output only the transcript, without summary or commentary. Mark unclear speech briefly and continue. If there is no speech, output exactly [no speech]."
+            "Transcribe ALL speech verbatim in language $languageCode. Preserve Pali quotations in their original language using established spelling only when supported by the audio; never complete verses from memory. Use natural punctuation and paragraphs; put poems and chanted verses on separate lines. Check spelling and omissions against the audio before responding. Output only the transcript, without headings, timestamps, Markdown, summary or commentary. Mark uncertain words [unclear] rather than guessing. If there is no speech, output exactly [no speech]."
         }
         val parts = JsonArray().apply {
             add(JsonObject().apply { addProperty("text", prompt) })
@@ -125,7 +137,7 @@ class GeminiTranscriber(
         val root = JsonObject().apply {
             add("contents", JsonArray().apply { add(JsonObject().apply { add("parts", parts) }) })
             add("generationConfig", JsonObject().apply {
-                addProperty("temperature", 0.2)
+                addProperty("temperature", 0.1)
                 addProperty("maxOutputTokens", 16384)
                 if (model == "gemini-3.8-flash") add("thinkingConfig", JsonObject().apply { addProperty("thinkingLevel", "low") })
                 if (model == "gemini-2.5-flash") add("thinkingConfig", JsonObject().apply { addProperty("thinkingBudget", 0) })
