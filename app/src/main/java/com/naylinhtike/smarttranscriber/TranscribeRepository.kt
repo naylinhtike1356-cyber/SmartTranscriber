@@ -10,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.google.gson.Gson
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -136,7 +137,7 @@ class TranscribeRepository(private val context: Context) {
         return@withContext job
     }
 
-    fun enqueueWork(jobId: String, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {
+    fun enqueueWork(jobId: String, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP): androidx.work.Operation {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -149,7 +150,22 @@ class TranscribeRepository(private val context: Context) {
             .setInputData(workDataOf("job_id" to jobId))
             .build()
 
-        workManager.enqueueUniqueWork("transcribe_$jobId", policy, request)
+        return workManager.enqueueUniqueWork("transcribe_$jobId", policy, request)
+    }
+
+    suspend fun recoverActiveJobs() = withContext(Dispatchers.IO) {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        val version = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info)
+        val preferences = context.getSharedPreferences("transcription_runtime", Context.MODE_PRIVATE)
+        // Old WorkRequests can retain hours of exponential backoff after an APK upgrade.
+        val policy = if (preferences.getLong("scheduled_version", -1L) != version) {
+            ExistingWorkPolicy.REPLACE
+        } else ExistingWorkPolicy.KEEP
+        listJobs().filter { it.isActive }.forEach { job ->
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            enqueueWork(job.id, policy).result.get(30, TimeUnit.SECONDS)
+        }
+        check(preferences.edit().putLong("scheduled_version", version).commit()) { "Could not save recovery version" }
     }
 
     fun pauseJob(jobId: String) {

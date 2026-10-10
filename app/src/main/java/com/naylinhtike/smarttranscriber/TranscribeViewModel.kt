@@ -68,7 +68,12 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.listJobs().filter { it.isActive }.forEach { repository.enqueueWork(it.id) }
+            try {
+                repository.recoverActiveJobs()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                _snackBarMessages.emit("အလုပ်ကျန်များကို ဆက်လုပ်ရန် App ကို ပြန်ဖွင့်ပါ သို့မဟုတ် Resume ကို နှိပ်ပါ။")
+            }
         }
         viewModelScope.launch {
             repository.jobsFlow.collect { jobs ->

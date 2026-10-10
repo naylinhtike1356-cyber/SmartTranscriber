@@ -70,9 +70,10 @@ class AudioDecoder {
                 currentCoroutineContext().ensureActive()
                 check(System.nanoTime() - lastProgressTime < 90_000_000_000L) { "Audio decoding timed out." }
 
+                // Short blocking waits let the codec make progress without hot polling.
                 var advanced = false
                 if (!inputEnded) {
-                    val inputIndex = decoder.dequeueInputBuffer(0)
+                    val inputIndex = decoder.dequeueInputBuffer(10_000L)
                     if (inputIndex >= 0) {
                         val buffer = decoder.getInputBuffer(inputIndex)!!
                         buffer.clear()
@@ -89,7 +90,7 @@ class AudioDecoder {
                     }
                 }
 
-                when (val outputIndex = decoder.dequeueOutputBuffer(info, 0)) {
+                when (val outputIndex = decoder.dequeueOutputBuffer(info, 10_000L)) {
                     MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         val decodedFormat = decoder.outputFormat
                         val newRate = decodedFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)

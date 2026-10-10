@@ -13,7 +13,16 @@ ffmpeg -f lavfi -i sine=frequency=440:sample_rate=44100:duration=3900 -ac 2 -cod
 Push it to `/sdcard/Android/data/com.naylinhtike.smarttranscriber/files/transcriber-65min.mp3`. Allow at least 160 MB of free device storage for the decoded WAVs and fixture. Install `app-debug-androidTest.apk` and run:
 
 ```text
-adb shell am instrument -w -r com.naylinhtike.smarttranscriber.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -r -e class com.naylinhtike.smarttranscriber.ReliabilityDeviceTest com.naylinhtike.smarttranscriber.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-The three device tests exercise actual MediaCodec stereo MP3 decoding and Sonic resampling over 65 minutes, an interrupted AtomicFile write, and the legacy-job upgrade. These checks do not establish Burmese/Pali transcription accuracy; that requires an actual sermon and a working Gemini account.
+Disable both Wi-Fi and mobile data in the disposable emulator before the scheduling-recovery test.
+
+The four device tests exercise actual MediaCodec stereo MP3 decoding and Sonic resampling over 65 minutes, an interrupted AtomicFile write, the legacy-job upgrade, and replacement of old scheduled delays exactly once while retaining partial text/checkpoints. These checks do not establish Burmese/Pali transcription accuracy; that requires an actual sermon and a working Gemini account.
+
+On slow emulators, ART may time out while verifying a large debug DEX during process startup. Precompile each installed APK before running the suite:
+
+```text
+adb shell cmd package compile -m speed -f com.naylinhtike.smarttranscriber
+adb shell cmd package compile -m speed -f com.naylinhtike.smarttranscriber.test
+```

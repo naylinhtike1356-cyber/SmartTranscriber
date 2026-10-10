@@ -65,6 +65,39 @@ class ReliabilityDeviceTest {
         }
     }
 
+    @Test fun upgradeRecoveryReplacesOldDelayOnceAndPreservesProgress() = runBlocking {
+        val network = context.getSystemService(android.net.ConnectivityManager::class.java)
+        assertNull("Disable Wi-Fi and mobile data in the test emulator first", network.activeNetwork)
+        val preferences = context.getSharedPreferences("transcription_runtime", android.content.Context.MODE_PRIVATE)
+        val previousVersion = preferences.getLong("scheduled_version", -1L)
+        val source = File(context.cacheDir, "recovery_fixture.audio").apply { writeText(java.util.UUID.randomUUID().toString()) }
+        val repository = TranscribeRepository(context)
+        val workManager = androidx.work.WorkManager.getInstance(context)
+        val job = repository.createJob(source, "Worker upgrade recovery test", 1000L, "my-MM")
+        try {
+            repository.enqueueWork(job.id).result.get(30, java.util.concurrent.TimeUnit.SECONDS)
+            fun activeWork() = workManager.getWorkInfosForUniqueWork("transcribe_${job.id}")
+                .get(30, java.util.concurrent.TimeUnit.SECONDS).single { !it.state.isFinished }
+            val oldId = activeWork().id
+            repository.updateJob(job.id) { it.copy(state = TranscribeJob.STATE_PROCESSING, completedChunks = 1, totalChunks = 3, transcript = "saved partial transcript") }
+            val checkpoints = ChunkCheckpoints(File(repository.getJobDir(job.id), "chunks").apply { mkdirs() })
+            checkpoints.save(0, "saved partial transcript")
+            preferences.edit().putLong("scheduled_version", -1L).commit()
+            repository.recoverActiveJobs()
+            val newWork = activeWork()
+            assertNotEquals(oldId, newWork.id)
+            assertEquals(0, newWork.runAttemptCount)
+            assertEquals("saved partial transcript", repository.getJob(job.id)!!.transcript)
+            assertEquals("saved partial transcript", checkpoints.read(0))
+            repository.recoverActiveJobs()
+            assertEquals(newWork.id, activeWork().id) // Ordinary startup does not restart a live request.
+        } finally {
+            repository.deleteJob(job.id)
+            source.delete()
+            preferences.edit().putLong("scheduled_version", previousVersion).commit()
+        }
+    }
+
     @Test fun legacyJobRemainsReadableAfterInPlaceUpgrade() {
         val job = TranscribeRepository(context).listJobs().firstOrNull { it.fileName == "Upgrade persistence test" }
         assertNotNull("Install v1.1, seed the legacy job, then install v1.2 over it", job)

@@ -75,7 +75,7 @@ class TranscribeWorker(
                 android.util.AtomicFile(countManifest).openRead().bufferedReader().use { it.readText().trim().toInt() }
             }.getOrDefault(0).takeIf { it in 1..10_000 } ?: 0
             val needsDecoding = storedCount <= 0 || (0 until storedCount).any {
-                checkpoints.read(it).isBlank() && File(chunksDir, "$it.wav").length() <= 44
+                checkpoints.read(it).isBlank() && !isValidWavChunk(File(chunksDir, "$it.wav"))
             }
             if (needsDecoding) {
                 repository.updateJob(jobId) { if (!it.isActive) it else it.copy(state = TranscribeJob.STATE_PREPARING, error = "") }
@@ -134,7 +134,7 @@ class TranscribeWorker(
                 }
 
                 val wavFile = File(chunksDir, "$index.wav")
-                check(wavFile.exists() && wavFile.length() > 44) {
+                check(isValidWavChunk(wavFile)) {
                     "Missing audio chunk $index"
                 }
 

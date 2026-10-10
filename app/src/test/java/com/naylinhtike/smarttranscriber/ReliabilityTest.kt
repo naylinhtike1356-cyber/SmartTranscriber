@@ -94,6 +94,7 @@ class ReliabilityTest {
             previousEnd = span.endSample
             val file = File(dir, "${span.index}.wav")
             assertEquals(44 + (span.endSample - span.startSample) * 2, file.length())
+            assertTrue(isValidWavChunk(file))
             file.inputStream().use { input ->
                 val header = ByteArray(44)
                 assertEquals(44, input.read(header))
@@ -105,6 +106,21 @@ class ReliabilityTest {
             }
         }
         assertArrayEquals(expectedDigest.digest(), actualDigest.digest())
+    }
+
+    @Test fun rejectsInterruptedOrTruncatedWavBeforeResumeUpload() {
+        val directory = temporary.newFolder()
+        val unfinished = File(directory, "unfinished.wav").apply { writeBytes(ByteArray(32_044)) }
+        assertFalse(isValidWavChunk(unfinished)) // PCM exists but the header was never committed.
+        PcmAudioWriter(directory).use { writer ->
+            writer.write(ByteBuffer.wrap(ByteArray(32_000)))
+            writer.complete()
+        }
+        val valid = File(directory, "0.wav")
+        assertTrue(isValidWavChunk(valid))
+        valid.appendBytes(byteArrayOf(0, 0))
+        assertFalse(isValidWavChunk(valid))
+        assertFalse(isValidWavChunk(File(directory, "missing.wav")))
     }
 
     @Test fun versionAndChecksumRejectInvalidUpdates() {
